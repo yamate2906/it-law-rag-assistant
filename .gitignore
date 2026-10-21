@@ -1,0 +1,14 @@
+# Môi trường ảo Python
+backend/venv/
+backend/__pycache__/
+
+# Thư viện Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Biến môi trường (Bảo mật API Key)
+.env
+backend/.env
+
+# File hệ thống
+.DS_Store
