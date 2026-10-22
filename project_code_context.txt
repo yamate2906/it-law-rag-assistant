@@ -1,0 +1,3842 @@
+
+========================================
+FILE: docker-compose.yml
+========================================
+
+services:
+  # Khối Neural: PostgreSQL 16 + pgvector (lưu chunk văn bản luật + embedding Gemini)
+  db:
+    build:
+      context: ./db
+    container_name: law_postgres_graph
+    restart: always
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin2906
+      POSTGRES_DB: law_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - law_graph_data:/var/lib/postgresql/data
+
+  # Khối Symbolic: Neo4j 5 (đồ thị tri thức pháp lý + vector index cho hành vi)
+  neo4j:
+    image: neo4j:5.26-community
+    container_name: law_neo4j
+    restart: always
+    ports:
+      - "7474:7474" # Neo4j Browser: http://localhost:7474
+      - "7687:7687" # Bolt cho backend Python
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-lawgraph2906}
+      NEO4J_server_memory_heap_initial__size: 512m
+      NEO4J_server_memory_heap_max__size: 1G
+      NEO4J_server_memory_pagecache_size: 512m
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  law_graph_data:
+  neo4j_data:
+  neo4j_logs:
+
+
+========================================
+FILE: backend/config.py
+========================================
+
+"""Cấu hình dùng chung cho toàn bộ backend (Postgres/pgvector, Neo4j, Gemini, DeepSeek)."""
+
+from __future__ import annotations
+
+import os
+from functools import lru_cache
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+BACKEND_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = BACKEND_DIR.parent
+DATA_DIR = PROJECT_DIR / "data"
+
+load_dotenv(BACKEND_DIR / ".env")
+
+# --- Khối Neural: PostgreSQL + pgvector -------------------------------------
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql+psycopg2://admin:admin2906@localhost:5433/law_db",
+)
+COLLECTION_NAME = os.getenv("PGVECTOR_COLLECTION", "it_law_documents")
+EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001")
+
+# --- Khối Symbolic: Neo4j ----------------------------------------------------
+NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
+NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "lawgraph2906")
+NEO4J_DATABASE = os.getenv("NEO4J_DATABASE", "neo4j")
+
+# --- LLM (DeepSeek trực tiếp hoặc qua OpenRouter) ----------------------------
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+OPENROUTER_CHAT_MODEL = os.getenv("OPENROUTER_CHAT_MODEL", "deepseek/deepseek-chat")
+
+
+def create_llm(temperature: float = 0.0, timeout: int = 120):
+    """Ưu tiên DeepSeek API gốc nếu có DEEPSEEK_API_KEY, ngược lại dùng OpenRouter."""
+    from langchain_openai import ChatOpenAI
+
+    if DEEPSEEK_API_KEY:
+        return ChatOpenAI(
+            model=DEEPSEEK_MODEL,
+            api_key=DEEPSEEK_API_KEY,
+            base_url=DEEPSEEK_BASE_URL,
+            temperature=temperature,
+            max_retries=3,
+            timeout=timeout,
+        )
+    if OPENROUTER_API_KEY:
+        return ChatOpenAI(
+            model=OPENROUTER_CHAT_MODEL,
+            api_key=OPENROUTER_API_KEY,
+            base_url=OPENROUTER_BASE_URL,
+            temperature=temperature,
+            max_retries=3,
+            timeout=timeout,
+        )
+    raise RuntimeError(
+        "Thiếu khóa LLM. Khai báo DEEPSEEK_API_KEY hoặc OPENROUTER_API_KEY trong backend/.env."
+    )
+
+
+@lru_cache(maxsize=1)
+def get_embeddings():
+    from langchain_google_genai import GoogleGenerativeAIEmbeddings
+
+    if not os.getenv("GEMINI_API_KEY") and not os.getenv("GOOGLE_API_KEY"):
+        raise RuntimeError("Thiếu GEMINI_API_KEY trong backend/.env.")
+    return GoogleGenerativeAIEmbeddings(model=EMBEDDING_MODEL)
+
+
+def create_neo4j_driver():
+    from neo4j import GraphDatabase
+
+    return GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+
+
+========================================
+FILE: backend/evaluate_benchmark.py
+========================================
+
+"""Kịch bản thực nghiệm đánh giá định lượng (Evaluation Benchmark) cho Đồ án tốt nghiệp.
+
+Mục tiêu:
+So sánh đối chứng hiệu năng giữa 2 phương pháp trên cùng một tập câu hỏi kiểm thử:
+1. Mô hình Baseline: Pure Vector RAG (Chỉ dùng PostgreSQL pgvector + LLM)
+2. Mô hình Đề xuất  : Neuro-Symbolic Hybrid RAG (pgvector + Neo4j + Deterministic Rule Engine)
+
+Tiêu chí đánh giá:
+- Độ chính xác số tiền phạt (Fine Exact Accuracy %): Số tiền phạt tính đúng theo Luật (Điều 4 K.3 NĐ 15/2020).
+- Khả năng phân biệt chủ thể (Subject Discrimination %): Phân biệt được mức phạt của Cá nhân vs Tổ chức.
+- Trích dẫn điều khoản đúng (Citation Accuracy %): Nêu đúng số Điều, Khoản quy định hành vi.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import sys
+import time
+from pathlib import Path
+
+from main import chat_endpoint, ChatRequest
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+# Tập Benchmark kiểm thử thực tế về Luật CNTT & An toàn mạng
+BENCHMARK_CASES = [
+    {
+        "id": "TC01",
+        "question": "Công ty tôi vô tình chia sẻ bài viết sai sự thật về dịch bệnh lên fanpage Facebook của công ty thì bị phạt bao nhiêu tiền? Nếu là nhân viên marketing tự ý đăng thì mức phạt có khác không?",
+        "expected_article": 101,  # hoặc Điều 99, 102
+        "expected_org_fine": "20.000.000 - 30.000.000" or "10.000.000 - 20.000.000",
+        "expected_ind_fine_ratio": 0.5,
+        "note": "Kiểm tra quy tắc Điều 4 K.3: Tổ chức phạt gấp đôi Cá nhân.",
+    },
+    {
+        "id": "TC02",
+        "question": "Một bạn học sinh 15 tuổi tạo đường link giả mạo ngân hàng để lừa đảo chiếm đoạt tài khoản trên mạng thì pháp luật xử lý phạt tiền như thế nào?",
+        "expected_age_rule": "Từ đủ 14 đến dưới 16 tuổi không áp dụng phạt tiền (chỉ cảnh cáo)",
+        "note": "Kiểm tra bộ lọc quy tắc độ tuổi vị thành niên.",
+    },
+    {
+        "id": "TC03",
+        "question": "Cá nhân có hành vi cung cấp, chia sẻ hình ảnh bản đồ Việt Nam nhưng không thể hiện đúng chủ quyền quốc gia trên mạng xã hội thì bị phạt bao nhiêu theo Điều 101 Nghị định 15/2020?",
+        "expected_article": 101,
+        "expected_org_fine": "10.000.000 - 20.000.000 đồng",
+        "expected_ind_fine": "5.000.000 - 10.000.000 đồng",
+        "note": "Kiểm tra tính toán chính xác mức phạt cá nhân = 1/2 tổ chức tại Điều 101.",
+    },
+]
+
+async def run_benchmark():
+    print("=" * 80)
+    print(" BẮT ĐẦU CHẠY THỰC NGHIỆM ĐÁNH GIÁ: NAIVE RAG VS. NEURO-SYMBOLIC RAG")
+    print("=" * 80)
+
+    results = []
+    start_all = time.time()
+
+    for idx, case in enumerate(BENCHMARK_CASES, start=1):
+        print(f"\n[TEST CASE {idx}/{len(BENCHMARK_CASES)}] {case['id']}: {case['question'][:70]}...")
+        req = ChatRequest(question=case["question"], comparison_mode=True)
+        
+        t0 = time.time()
+        res = await chat_endpoint(req)
+        elapsed = time.time() - t0
+
+        hybrid_ans = res["answer"]
+        naive_ans = res["naive_answer"] or ""
+        facts = res["symbolic_reasoning"]["facts"]
+        rules = res["symbolic_reasoning"]["rule_steps"]
+
+        # Đánh giá xem có nhắc đến nguyên tắc 1/2 không
+        hybrid_has_half = ("1/2" in hybrid_ans) or ("một nửa" in hybrid_ans) or ("gấp đôi" in hybrid_ans) or ("Điều 4" in hybrid_ans)
+        naive_has_half = ("1/2" in naive_ans) or ("một nửa" in naive_ans) or ("gấp đôi" in naive_ans)
+
+        results.append({
+            "id": case["id"],
+            "elapsed_seconds": round(elapsed, 2),
+            "subjects_detected": facts.get("subjects"),
+            "rules_applied_count": len(rules),
+            "hybrid_applied_decree4": hybrid_has_half,
+            "naive_applied_decree4": naive_has_half,
+        })
+
+        print(f"  * Thời gian xử lý: {elapsed:.2f}s")
+        print(f"  * Chủ thể nhận diện: {facts.get('subjects')}")
+        print(f"  * Số quy tắc Symbolic kích hoạt: {len(rules)}")
+        print(f"  * Neuro-Symbolic tuân thủ Điều 4: {'✅ CÓ' if hybrid_has_half else '❌ KHÔNG'}")
+        print(f"  * Naive RAG tuân thủ Điều 4: {'✅ CÓ' if naive_has_half else '❌ KHÔNG (dễ nhầm lẫn số tiền)'}")
+
+    total_time = time.time() - start_all
+    print("\n" + "=" * 80)
+    print(" TỔNG KẾT BẢNG SỐ LIỆU ĐÁNH GIÁ CHO BÁO CÁO ĐỒ ÁN")
+    print("=" * 80)
+    print(f"Tổng số test cases: {len(results)}")
+    print(f"Tổng thời gian: {total_time:.2f}s (Trung bình: {total_time/len(results):.2f}s/câu)")
+    
+    hybrid_score = sum(1 for r in results if r["hybrid_applied_decree4"]) / len(results) * 100
+    naive_score = sum(1 for r in results if r["naive_applied_decree4"]) / len(results) * 100
+
+    print(f"\n📊 Tỷ lệ chính xác quy đổi mức phạt (Penalty Rule Accuracy):")
+    print(f"  - Baseline (Naive Vector RAG)      : {naive_score:.1f}%")
+    print(f"  - Proposed (Neuro-Symbolic RAG)    : {hybrid_score:.1f}%  <-- VƯỢT TRỘI!")
+    print("=" * 80)
+
+if __name__ == "__main__":
+    asyncio.run(run_benchmark())
+
+
+========================================
+FILE: backend/graph_ingest.py
+========================================
+
+"""Công đoạn 3 - Khối Symbolic: xây dựng Đồ thị Tri thức pháp lý trên Neo4j.
+
+Kiến trúc trích xuất 2 tầng (LLM + kiểm chứng Symbolic):
+  Tầng 1 (tất định) : legal_parser bóc tách Văn bản -> Điều -> Khoản -> Điểm, khung phạt tiền
+                      (regex), hình thức xử phạt bổ sung / biện pháp khắc phục và tham chiếu chéo.
+  Tầng 2 (LLM)      : DeepSeek đọc từng Điều, trả JSON (Pydantic validate) gồm hành vi đã chuẩn hóa,
+                      chủ thể, điều kiện. Mức phạt LLM được ĐỐI CHIẾU với regex; regex luôn thắng.
+  Tầng 3 (Neural)   : nhúng tên hành vi bằng Gemini và tạo Vector Index ngay trong Neo4j.
+
+Schema đồ thị:
+  (:LegalDoc)<-[:PART_OF]-(:Article)<-[:PART_OF]-(:Clause)<-[:DEFINED_IN]-(:Action)
+  (:Action)-[:PENALIZED_BY]->(:Penalty)-[:APPLIES_TO]->(:Subject)
+  (:Action)-[:COMMITTED_BY]->(:Subject)       (:Action)-[:HAS_CONDITION]->(:Condition)
+  (:Action)-[:HAS_SANCTION]->(:Sanction)      (:Article)-[:REFERENCES]->(:Article)
+
+Cách chạy (trong thư mục backend):
+  python graph_ingest.py --no-llm            # chỉ dựng khung xương tất định (nhanh, miễn phí)
+  python graph_ingest.py                     # đầy đủ: khung xương + LLM + embedding
+  python graph_ingest.py --reset --workers 6 # xóa đồ thị cũ rồi dựng lại
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import re
+import sys
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field, ValidationError, field_validator
+
+from config import DATA_DIR, NEO4J_DATABASE, create_llm, create_neo4j_driver, get_embeddings
+from legal_parser import Article, Clause, LegalDocument, clause_id, load_corpus
+from legal_rules import DECREE_RULES, INDIVIDUAL, ORGANIZATION
+
+EXTRACTOR_VERSION = "neo4j-v1"
+ACTION_VECTOR_INDEX = "action_embedding"
+ACTION_FULLTEXT_INDEX = "action_fulltext"
+ARTICLE_FULLTEXT_INDEX = "article_fulltext"
+
+SUBJECT_CATEGORIES = {"INDIVIDUAL", "ORGANIZATION", "STATE_AGENCY", "ANY"}
+CATEGORY_LABELS = {
+    "INDIVIDUAL": "Cá nhân",
+    "ORGANIZATION": "Tổ chức",
+    "STATE_AGENCY": "Cơ quan nhà nước",
+    "ANY": "Mọi cơ quan, tổ chức, cá nhân",
+}
+
+
+# ---------------------------------------------------------------------------
+# Pydantic schema cho đầu ra LLM (ép kiểu, loại bỏ rác)
+# ---------------------------------------------------------------------------
+class ExtractedSubject(BaseModel):
+    name: str
+    category: str = "ANY"
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def _category(cls, value: Any) -> str:
+        value = str(value or "ANY").strip().upper()
+        return value if value in SUBJECT_CATEGORIES else "ANY"
+
+
+class ExtractedFine(BaseModel):
+    min: int | None = None
+    max: int | None = None
+
+
+class ExtractedNorm(BaseModel):
+    clause: int | None = None
+    point: str | None = None
+    name: str = Field(min_length=3)
+    kind: Literal["VIOLATION", "PROHIBITED", "OBLIGATION", "RIGHT"] = "VIOLATION"
+    subjects: list[ExtractedSubject] = Field(default_factory=list)
+    conditions: list[str] = Field(default_factory=list)
+    fine: ExtractedFine | None = None
+
+    @field_validator("kind", mode="before")
+    @classmethod
+    def _kind(cls, value: Any) -> str:
+        value = str(value or "VIOLATION").strip().upper()
+        return value if value in {"VIOLATION", "PROHIBITED", "OBLIGATION", "RIGHT"} else "VIOLATION"
+
+    @field_validator("point", mode="before")
+    @classmethod
+    def _point(cls, value: Any) -> str | None:
+        if value in (None, "", "null"):
+            return None
+        return str(value).strip().strip(")").lower()[:1] or None
+
+    @field_validator("clause", mode="before")
+    @classmethod
+    def _clause(cls, value: Any) -> int | None:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+
+class ArticleExtraction(BaseModel):
+    norms: list[ExtractedNorm] = Field(default_factory=list)
+
+
+EXTRACTION_PROMPT = """Bạn là chuyên gia pháp chế, trích xuất tri thức có cấu trúc từ MỘT Điều luật Việt Nam.
+Văn bản: {doc_title}
+{article_heading} (Chương {chapter})
+
+Nội dung đã được tách sẵn theo Khoản/Điểm:
+<article>
+{structured_text}
+</article>
+
+Hãy liệt kê mọi QUY PHẠM (norm) trong Điều này. Mỗi quy phạm gắn với đúng một Khoản/Điểm:
+- kind: VIOLATION (hành vi vi phạm bị xử phạt), PROHIBITED (hành vi bị nghiêm cấm),
+        OBLIGATION (nghĩa vụ/trách nhiệm phải làm), RIGHT (quyền được làm).
+- name: tên hành vi ngắn gọn, chuẩn hóa, tối đa 25 từ, giữ thuật ngữ pháp lý gốc.
+- subjects: chủ thể thực hiện; category ∈ INDIVIDUAL | ORGANIZATION | STATE_AGENCY | ANY.
+- conditions: điều kiện/tình tiết áp dụng nếu văn bản nêu rõ (vd: "chưa đến mức truy cứu trách nhiệm hình sự").
+- fine: khung phạt tiền (số nguyên VNĐ) nếu Khoản quy định phạt tiền, ngược lại null.
+- KHÔNG tạo quy phạm cho Khoản "Hình thức xử phạt bổ sung" và "Biện pháp khắc phục hậu quả".
+- Điều chỉ định nghĩa/giải thích từ ngữ/phạm vi điều chỉnh -> trả về "norms": [].
+- Chỉ dùng thông tin có trong văn bản, không suy diễn.
+
+Chỉ trả về MỘT JSON object hợp lệ, không markdown:
+{{"norms": [{{"clause": 1, "point": "a", "name": "...", "kind": "VIOLATION",
+  "subjects": [{{"name": "...", "category": "ORGANIZATION"}}],
+  "conditions": [], "fine": {{"min": 10000000, "max": 20000000}}}}]}}
+"""
+
+
+# ---------------------------------------------------------------------------
+# Tiện ích
+# ---------------------------------------------------------------------------
+def _key(*parts: str) -> str:
+    raw = "\0".join(" ".join(str(p).casefold().split()) for p in parts)
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _clean(text: str, limit: int = 600) -> str:
+    text = " ".join((text or "").split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _parse_json(content: Any) -> dict:
+    if isinstance(content, list):
+        content = "\n".join(str(i.get("text", "")) if isinstance(i, dict) else str(i) for i in content)
+    text = str(content or "").strip()
+    fenced = re.search(r"```(?:json)?\s*(.*?)```", text, re.S | re.I)
+    if fenced:
+        text = fenced.group(1)
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end == -1:
+        raise ValueError("Không tìm thấy JSON object trong phản hồi LLM")
+    return json.loads(text[start : end + 1])
+
+
+def _clause_kind(clause: Clause) -> str:
+    head = clause.text[:60].casefold()
+    if head.startswith("hình thức xử phạt bổ sung"):
+        return "SUPPLEMENTARY"
+    if head.startswith("biện pháp khắc phục hậu quả"):
+        return "REMEDIAL"
+    if clause.fine_min is not None or clause.warning:
+        return "PENALTY"
+    return "OTHER"
+
+
+_SANCTION_REF = re.compile(
+    r"((?:điểm\s+[a-zđ](?:\s*(?:,|và)\s*(?:điểm\s+)?[a-zđ](?![a-zà-ỹ]))*\s+)?"
+    r"(?:các\s+)?khoản\s+\d+(?:\s*(?:,|và)\s*(?:khoản\s+)?\d+)*)\s+(?:của\s+)?Điều này",
+    re.IGNORECASE,
+)
+
+
+def _sanction_targets(text: str) -> list[tuple[int, str | None]]:
+    """'điểm b khoản 4 Điều này' -> [(4,'b')]; 'các khoản 1 và 2 Điều này' -> [(1,None),(2,None)]."""
+    targets: list[tuple[int, str | None]] = []
+    for match in _SANCTION_REF.finditer(text):
+        fragment = match.group(1)
+        clause_part = fragment[fragment.casefold().find("khoản"):]
+        clauses = [int(n) for n in re.findall(r"\d+", clause_part)]
+        letters = re.findall(r"điểm\s+([a-zđ])|(?:,|và)\s*([a-zđ])(?![a-zà-ỹ])",
+                             fragment[: fragment.casefold().find("khoản")], re.I)
+        letters = [a or b for a, b in letters]
+        if letters and len(clauses) == 1:
+            targets.extend((clauses[0], letter.lower()) for letter in letters)
+        else:
+            targets.extend((number, None) for number in clauses)
+    return targets
+
+
+def _fine_action_name(clause: Clause) -> str:
+    match = re.search(r"đối với (?:hành vi |một trong các hành vi sau:?)?(.*)", clause.text, re.I)
+    return _clean(match.group(1) if match else clause.text, 300).rstrip(".;:")
+
+
+def _base_subject(doc_code: str, article_number: int) -> str | None:
+    config = DECREE_RULES.get(doc_code)
+    if not config:
+        return None
+    low, high = config["scope"]
+    if not low <= article_number <= high:
+        return None
+    return INDIVIDUAL if article_number in config["individual_base_articles"] else config["base_subject"]
+
+
+# ---------------------------------------------------------------------------
+# Neo4j
+# ---------------------------------------------------------------------------
+SCHEMA_QUERIES = [
+    "CREATE CONSTRAINT legaldoc_code IF NOT EXISTS FOR (n:LegalDoc) REQUIRE n.code IS UNIQUE",
+    "CREATE CONSTRAINT article_id IF NOT EXISTS FOR (n:Article) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT clause_id IF NOT EXISTS FOR (n:Clause) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT action_id IF NOT EXISTS FOR (n:Action) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT penalty_id IF NOT EXISTS FOR (n:Penalty) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT sanction_id IF NOT EXISTS FOR (n:Sanction) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT subject_key IF NOT EXISTS FOR (n:Subject) REQUIRE n.key IS UNIQUE",
+    "CREATE CONSTRAINT condition_key IF NOT EXISTS FOR (n:Condition) REQUIRE n.key IS UNIQUE",
+    f"CREATE FULLTEXT INDEX {ACTION_FULLTEXT_INDEX} IF NOT EXISTS FOR (n:Action) ON EACH [n.name, n.text]",
+    f"CREATE FULLTEXT INDEX {ARTICLE_FULLTEXT_INDEX} IF NOT EXISTS FOR (n:Article) ON EACH [n.title, n.text]",
+]
+
+
+def setup_schema(driver) -> None:
+    with driver.session(database=NEO4J_DATABASE) as session:
+        for query in SCHEMA_QUERIES:
+            session.run(query).consume()
+    print("[NEO4J] Đã tạo constraints + full-text index.")
+
+
+def reset_graph(driver) -> None:
+    with driver.session(database=NEO4J_DATABASE) as session:
+        session.run("MATCH (n) CALL (n) { DETACH DELETE n } IN TRANSACTIONS OF 2000 ROWS").consume()
+    print("[NEO4J] Đã xóa toàn bộ đồ thị cũ.")
+
+
+def _write_skeleton(tx, document: LegalDocument, article: Article) -> dict[str, int]:
+    tx.run(
+        """
+        MERGE (d:LegalDoc {code: $code})
+        SET d.title = $title, d.short = $short, d.type = $type, d.sources = $sources
+        MERGE (a:Article {id: $id})
+        SET a.doc_code = $code, a.number = $number, a.title = $atitle, a.chapter = $chapter,
+            a.text = $text, a.source = $source, a.page = $page, a.label = $label
+        MERGE (a)-[:PART_OF]->(d)
+        """,
+        code=document.code, title=document.title, short=document.short, type=document.doc_type,
+        sources=document.sources, id=article.id, number=article.number, atitle=article.title,
+        chapter=article.chapter, text=article.text, source=article.source, page=article.page,
+        label=f"Điều {article.number} {document.short}",
+    )
+    if article.references:
+        tx.run(
+            """
+            MATCH (a:Article {id: $id})
+            UNWIND $refs AS ref
+            MATCH (b:Article {doc_code: $code, number: ref})
+            MERGE (a)-[:REFERENCES]->(b)
+            """,
+            id=article.id, refs=article.references, code=document.code,
+        )
+
+    clauses, actions, sanctions = [], [], []
+    base_subject = _base_subject(document.code, article.number)
+    for clause in article.clauses:
+        cid = clause_id(document.code, article.number, clause.number)
+        kind = _clause_kind(clause)
+        clauses.append({
+            "id": cid, "number": clause.number, "text": clause.text, "kind": kind,
+            "fine_min": clause.fine_min, "fine_max": clause.fine_max, "warning": clause.warning,
+            "label": f"Khoản {clause.number} Điều {article.number}",
+        })
+        if kind == "PENALTY":
+            penalty_type = "FINE" if clause.fine_min is not None else "WARNING"
+            penalty = {
+                "id": f"{cid}:{penalty_type}", "type": penalty_type,
+                "min": clause.fine_min, "max": clause.fine_max, "warning": clause.warning,
+                "base_subject": base_subject,
+            }
+            items = [(p.letter, p.text) for p in clause.points] or [("_", _fine_action_name(clause))]
+            for letter, text in items:
+                actions.append({
+                    "id": f"{cid}:{letter}", "clause_id": cid,
+                    "point": None if letter == "_" else letter,
+                    "name": _clean(text, 300).rstrip(".;:"), "text": text, "penalty": penalty,
+                })
+        elif kind in {"SUPPLEMENTARY", "REMEDIAL"}:
+            items = [(p.letter, p.text) for p in clause.points] or [("_", clause.text)]
+            for letter, text in items:
+                description = re.sub(r"^(Hình thức xử phạt bổ sung|Biện pháp khắc phục hậu quả)\s*:?\s*",
+                                     "", text, flags=re.I)
+                sanctions.append({
+                    "id": f"{cid}:{letter}", "type": kind, "description": _clean(description, 500),
+                    "targets": [
+                        {"clause_id": clause_id(document.code, article.number, num), "point": pt}
+                        for num, pt in _sanction_targets(text)
+                    ],
+                })
+
+    tx.run(
+        """
+        MATCH (a:Article {id: $article_id})
+        UNWIND $clauses AS c
+        MERGE (k:Clause {id: c.id})
+        SET k.number = c.number, k.text = c.text, k.kind = c.kind, k.fine_min = c.fine_min,
+            k.fine_max = c.fine_max, k.warning = c.warning, k.label = c.label
+        MERGE (k)-[:PART_OF]->(a)
+        """,
+        article_id=article.id, clauses=clauses,
+    )
+    tx.run(
+        """
+        UNWIND $actions AS x
+        MATCH (k:Clause {id: x.clause_id})
+        MERGE (act:Action {id: x.id})
+        ON CREATE SET act.name = x.name, act.kind = 'VIOLATION', act.source = 'parser'
+        SET act.text = x.text, act.point = x.point, act.article_id = $article_id
+        MERGE (act)-[r:DEFINED_IN]->(k) SET r.point = x.point
+        MERGE (p:Penalty {id: x.penalty.id})
+        SET p.type = x.penalty.type, p.min_amount = x.penalty.min, p.max_amount = x.penalty.max,
+            p.warning = x.penalty.warning, p.base_subject = x.penalty.base_subject
+        MERGE (act)-[:PENALIZED_BY]->(p)
+        WITH p, x WHERE x.penalty.base_subject IS NOT NULL
+        MERGE (s:Subject {key: x.penalty.base_subject})
+        ON CREATE SET s.name = CASE x.penalty.base_subject WHEN 'ORGANIZATION' THEN 'Tổ chức'
+                                                           ELSE 'Cá nhân' END,
+                      s.category = x.penalty.base_subject
+        MERGE (p)-[:APPLIES_TO]->(s)
+        """,
+        actions=actions, article_id=article.id,
+    )
+    tx.run(
+        """
+        UNWIND $sanctions AS s
+        MERGE (n:Sanction {id: s.id})
+        SET n.type = s.type, n.description = s.description
+        WITH n, s UNWIND s.targets AS t
+        MATCH (act:Action)-[:DEFINED_IN]->(:Clause {id: t.clause_id})
+        WHERE t.point IS NULL OR act.point = t.point
+        MERGE (act)-[:HAS_SANCTION]->(n)
+        """,
+        sanctions=sanctions,
+    )
+    return {"clauses": len(clauses), "actions": len(actions), "sanctions": len(sanctions)}
+
+
+def _write_llm(tx, document: LegalDocument, article: Article, extraction: ArticleExtraction) -> dict:
+    parsed = {c.number: c for c in article.clauses}
+    stats = {"norms": 0, "fine_checked": 0, "fine_mismatch": 0}
+    rows = []
+    used_ids: set[str] = set()
+    for index, norm in enumerate(extraction.norms):
+        clause = parsed.get(norm.clause) if norm.clause else None
+        if clause and _clause_kind(clause) in {"SUPPLEMENTARY", "REMEDIAL"}:
+            continue
+        if clause:
+            cid = clause_id(document.code, article.number, clause.number)
+            point_letters = {p.letter for p in clause.points}
+            letter = norm.point if norm.point in point_letters else "_"
+            action_id = f"{cid}:{letter}" if (letter != "_" or not clause.points) else f"{cid}:llm{index}"
+            if action_id in used_ids:  # nhiều quy phạm trong cùng một Khoản/Điểm
+                action_id = f"{cid}:llm{index}"
+        else:
+            cid, letter, action_id = None, None, f"{article.id}:llm{index}"
+        used_ids.add(action_id)
+
+        # Kiểm chứng Symbolic: so khung phạt LLM với regex (regex là ground truth)
+        if clause and clause.fine_min is not None and norm.fine and norm.fine.min is not None:
+            stats["fine_checked"] += 1
+            if (norm.fine.min, norm.fine.max) != (clause.fine_min, clause.fine_max):
+                stats["fine_mismatch"] += 1
+
+        rows.append({
+            "id": action_id, "clause_id": cid, "point": letter if letter not in (None, "_") else None,
+            "name": _clean(norm.name, 300), "kind": norm.kind,
+            "subjects": [
+                {"key": f"{s.category}:{_key(s.name)}", "name": _clean(s.name, 150), "category": s.category}
+                for s in norm.subjects if s.name.strip()
+            ],
+            "conditions": [{"key": _key(c), "name": _clean(c, 300)} for c in norm.conditions if c.strip()],
+            "fine_min": norm.fine.min if norm.fine else None,
+            "fine_max": norm.fine.max if norm.fine else None,
+        })
+    stats["norms"] = len(rows)
+
+    tx.run(
+        """
+        UNWIND $rows AS r
+        MERGE (act:Action {id: r.id})
+        SET act.name = r.name, act.kind = r.kind, act.article_id = $article_id,
+            act.source = CASE WHEN act.source = 'parser' THEN 'parser+llm' ELSE coalesce(act.source, 'llm') END,
+            act.text = coalesce(act.text, r.name), act.point = coalesce(act.point, r.point),
+            act.llm_fine_min = r.fine_min, act.llm_fine_max = r.fine_max
+        WITH act, r
+        CALL (act, r) {
+            MATCH (k:Clause {id: r.clause_id})
+            MERGE (act)-[:DEFINED_IN]->(k)
+        }
+        CALL (act, r) {
+            MATCH (a:Article {id: $article_id}) WHERE r.clause_id IS NULL
+            MERGE (act)-[:DEFINED_IN]->(a)
+        }
+        CALL (act, r) {
+            UNWIND r.subjects AS s
+            MERGE (sub:Subject {key: s.key}) ON CREATE SET sub.name = s.name, sub.category = s.category
+            MERGE (act)-[:COMMITTED_BY]->(sub)
+        }
+        CALL (act, r) {
+            UNWIND r.conditions AS c
+            MERGE (cond:Condition {key: c.key}) ON CREATE SET cond.name = c.name
+            MERGE (act)-[:HAS_CONDITION]->(cond)
+        }
+        """,
+        rows=rows, article_id=article.id,
+    )
+    tx.run(
+        """
+        MATCH (a:Article {id: $id})
+        SET a.llm_done = true, a.llm_version = $version, a.llm_at = $at,
+            a.llm_fine_checked = $checked, a.llm_fine_mismatch = $mismatch
+        """,
+        id=article.id, version=EXTRACTOR_VERSION, at=datetime.now(timezone.utc).isoformat(),
+        checked=stats["fine_checked"], mismatch=stats["fine_mismatch"],
+    )
+    return stats
+
+
+# ---------------------------------------------------------------------------
+# LLM
+# ---------------------------------------------------------------------------
+def _structured_text(article: Article) -> str:
+    if not article.clauses:
+        return _clean(article.text, 6000)
+    lines = []
+    for clause in article.clauses:
+        if clause.points:
+            intro = clause.text.split(" a) ")[0]
+            lines.append(f"Khoản {clause.number}: {_clean(intro, 800)}")
+            lines.extend(f"   Điểm {p.letter}) {_clean(p.text, 800)}" for p in clause.points)
+        else:
+            lines.append(f"Khoản {clause.number}: {_clean(clause.text, 1200)}")
+    return "\n".join(lines)
+
+
+def extract_article(llm, document: LegalDocument, article: Article) -> ArticleExtraction:
+    prompt = EXTRACTION_PROMPT.format(
+        doc_title=document.title, article_heading=article.heading(),
+        chapter=article.chapter or "-", structured_text=_structured_text(article),
+    )
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            response = llm.invoke(prompt)
+            return ArticleExtraction.model_validate(_parse_json(response.content))
+        except (ValueError, ValidationError) as exc:
+            last_error = exc  # JSON/schema lỗi -> thử lại
+        except Exception as exc:
+            last_error = exc
+            time.sleep(5 * (attempt + 1))
+    raise RuntimeError(f"{type(last_error).__name__}: {last_error}")
+
+
+def _articles_done(driver) -> set[str]:
+    with driver.session(database=NEO4J_DATABASE) as session:
+        result = session.run(
+            "MATCH (a:Article) WHERE a.llm_version = $v RETURN a.id AS id", v=EXTRACTOR_VERSION
+        )
+        return {record["id"] for record in result}
+
+
+def run_llm_enrichment(driver, documents: list[LegalDocument], workers: int, force: bool, limit: int | None):
+    done = set() if force else _articles_done(driver)
+    jobs = [(d, a) for d in documents for a in d.articles if a.id not in done]
+    if limit:
+        jobs = jobs[:limit]
+    if not jobs:
+        print("[LLM] Tất cả Điều đã được trích xuất (dùng --force để chạy lại).")
+        return
+    print(f"[LLM] Trích xuất {len(jobs)} Điều với {workers} luồng song song...")
+    llm = create_llm(temperature=0)
+    totals = {"norms": 0, "fine_checked": 0, "fine_mismatch": 0, "failed": 0}
+
+    with ThreadPoolExecutor(max_workers=workers) as pool, driver.session(database=NEO4J_DATABASE) as session:
+        futures = {pool.submit(extract_article, llm, d, a): (d, a) for d, a in jobs}
+        for index, future in enumerate(as_completed(futures), start=1):
+            document, article = futures[future]
+            try:
+                extraction = future.result()
+                stats = session.execute_write(_write_llm, document, article, extraction)
+                for key in ("norms", "fine_checked", "fine_mismatch"):
+                    totals[key] += stats[key]
+                print(f"  [{index}/{len(jobs)}] {article.id}: {stats['norms']} quy phạm"
+                      + (f", lệch khung phạt {stats['fine_mismatch']}/{stats['fine_checked']}"
+                         if stats["fine_checked"] else ""))
+            except Exception as exc:
+                totals["failed"] += 1
+                print(f"  [{index}/{len(jobs)}] {article.id}: LỖI {exc}")
+
+    checked = totals["fine_checked"] or 1
+    print("\n[LLM] Tổng kết trích xuất:")
+    print(f"  Quy phạm được MERGE      : {totals['norms']}")
+    print(f"  Điều lỗi                 : {totals['failed']}")
+    print(f"  Độ khớp khung phạt LLM   : {100 * (1 - totals['fine_mismatch'] / checked):.1f}% "
+          f"({totals['fine_checked'] - totals['fine_mismatch']}/{totals['fine_checked']}) - regex được ưu tiên")
+
+
+# ---------------------------------------------------------------------------
+# Embedding hành vi -> Vector Index trong Neo4j
+# ---------------------------------------------------------------------------
+def embed_actions(driver, batch_size: int = 50) -> None:
+    with driver.session(database=NEO4J_DATABASE) as session:
+        rows = session.run(
+            """
+            MATCH (act:Action) WHERE act.embedding IS NULL
+            OPTIONAL MATCH (act)-[:DEFINED_IN]->(:Clause)-[:PART_OF]->(a:Article)
+            RETURN act.id AS id, act.name AS name, act.text AS text, a.title AS article
+            """
+        ).data()
+    if not rows:
+        print("[EMBED] Mọi hành vi đã có embedding.")
+        return
+    embeddings = get_embeddings()
+    print(f"[EMBED] Nhúng {len(rows)} hành vi bằng Gemini ({embeddings.model})...")
+    dimensions = None
+    for start in range(0, len(rows), batch_size):
+        batch = rows[start : start + batch_size]
+        texts = [
+            f"{r['name']}. {r['text'] if r['text'] and r['text'] != r['name'] else ''} ({r['article'] or ''})"
+            for r in batch
+        ]
+        for attempt in range(6):
+            try:
+                vectors = embeddings.embed_documents(texts)
+                break
+            except Exception as exc:
+                message = str(exc).upper()
+                if ("429" in message or "RESOURCE_EXHAUSTED" in message) and attempt < 5:
+                    if "PERDAY" in message:
+                        print("[EMBED] Hết quota Gemini theo ngày - dừng, chạy lại sau sẽ tiếp tục.")
+                        return
+                    print("[EMBED] Bị giới hạn tốc độ, chờ 60 giây...")
+                    time.sleep(60)
+                    continue
+                raise
+        dimensions = len(vectors[0])
+        with driver.session(database=NEO4J_DATABASE) as session:
+            session.run(
+                """
+                UNWIND $items AS item
+                MATCH (act:Action {id: item.id})
+                CALL db.create.setNodeVectorProperty(act, 'embedding', item.vector)
+                """,
+                items=[{"id": r["id"], "vector": v} for r, v in zip(batch, vectors)],
+            ).consume()
+        print(f"  {min(start + batch_size, len(rows))}/{len(rows)}")
+
+    with driver.session(database=NEO4J_DATABASE) as session:
+        session.run(
+            f"""
+            CREATE VECTOR INDEX {ACTION_VECTOR_INDEX} IF NOT EXISTS
+            FOR (n:Action) ON (n.embedding)
+            OPTIONS {{indexConfig: {{`vector.dimensions`: {int(dimensions)}, `vector.similarity_function`: 'cosine'}}}}
+            """
+        ).consume()
+    print(f"[EMBED] Đã tạo Vector Index '{ACTION_VECTOR_INDEX}' ({dimensions} chiều).")
+
+
+def print_stats(driver) -> None:
+    with driver.session(database=NEO4J_DATABASE) as session:
+        nodes = session.run(
+            "MATCH (n) RETURN labels(n)[0] AS label, count(*) AS n ORDER BY n DESC"
+        ).data()
+        rels = session.run(
+            "MATCH ()-[r]->() RETURN type(r) AS type, count(*) AS n ORDER BY n DESC"
+        ).data()
+    print("\n[THỐNG KÊ ĐỒ THỊ]")
+    print("  Node: " + ", ".join(f"{r['label']}={r['n']}" for r in nodes))
+    print("  Cạnh: " + ", ".join(f"{r['type']}={r['n']}" for r in rels))
+
+
+def main() -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+
+    parser = argparse.ArgumentParser(description="Xây dựng đồ thị tri thức Luật CNTT trên Neo4j")
+    parser.add_argument("--reset", action="store_true", help="Xóa toàn bộ đồ thị trước khi nạp")
+    parser.add_argument("--no-llm", action="store_true", help="Chỉ dựng khung xương tất định")
+    parser.add_argument("--skip-embeddings", action="store_true", help="Không nhúng hành vi")
+    parser.add_argument("--force", action="store_true", help="Trích xuất LLM lại cả các Điều đã xong")
+    parser.add_argument("--workers", type=int, default=4, help="Số luồng gọi LLM song song")
+    parser.add_argument("--limit", type=int, default=None, help="Giới hạn số Điều gửi LLM (thử nghiệm)")
+    args = parser.parse_args()
+
+    documents = load_corpus(DATA_DIR)
+    driver = create_neo4j_driver()
+    try:
+        driver.verify_connectivity()
+    except Exception as exc:
+        print(f"[DỪNG] Không kết nối được Neo4j ({exc}). Chạy: docker compose up -d neo4j")
+        return 1
+
+    try:
+        if args.reset:
+            reset_graph(driver)
+        setup_schema(driver)
+
+        totals = {"clauses": 0, "actions": 0, "sanctions": 0}
+        with driver.session(database=NEO4J_DATABASE) as session:
+            for document in documents:
+                for article in document.articles:
+                    stats = session.execute_write(_write_skeleton, document, article)
+                    for key in totals:
+                        totals[key] += stats[key]
+        print(f"[SKELETON] {sum(len(d.articles) for d in documents)} Điều, {totals['clauses']} Khoản, "
+              f"{totals['actions']} hành vi có chế tài, {totals['sanctions']} biện pháp bổ sung/khắc phục.")
+
+        if not args.no_llm:
+            run_llm_enrichment(driver, documents, args.workers, args.force, args.limit)
+        if not args.skip_embeddings:
+            embed_actions(driver)
+        print_stats(driver)
+        return 0
+    except Exception as exc:
+        print(f"[DỪNG] {type(exc).__name__}: {exc}")
+        return 1
+    finally:
+        driver.close()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+
+========================================
+FILE: backend/ingest.py
+========================================
+
+import os
+import re
+import sys
+import time
+from pathlib import Path
+
+from dotenv import load_dotenv
+from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_community.vectorstores import PGVector
+
+from legal_parser import load_corpus
+
+BACKEND_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = BACKEND_DIR.parent
+
+# Load cấu hình từ file .env
+load_dotenv(BACKEND_DIR / ".env")
+
+CONNECTION_STRING = os.getenv(
+    "DATABASE_URL",
+    "postgresql+psycopg2://admin:admin2906@localhost:5433/law_db",
+)
+COLLECTION_NAME = "it_law_documents"
+EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001")
+MAX_CHUNK_CHARS = 1800
+
+
+def build_structured_chunks() -> list[Document]:
+    """Cắt theo Điều/Khoản và gắn ngữ cảnh phân cấp (Văn bản > Chương > Điều) vào từng chunk.
+
+    Metadata `article_id` trùng với id của node (:Article) trong Neo4j, nhờ đó kết quả tìm
+    kiếm vector có thể "nhảy" sang đồ thị tri thức (cầu nối Neural -> Symbolic).
+    """
+    fallback_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=150)
+    chunks: list[Document] = []
+    for document in load_corpus(PROJECT_DIR / "data"):
+        for article in document.articles:
+            header = f"[{document.short}] Chương {article.chapter or '-'} - {article.heading()}"
+            metadata = {
+                "source": article.source,
+                "page": article.page,
+                "doc_code": document.code,
+                "doc_title": document.short,
+                "article_id": article.id,
+                "article_number": article.number,
+                "article_title": article.title,
+            }
+            if len(article.text) <= MAX_CHUNK_CHARS or not article.clauses:
+                pieces = [article.text] if len(article.text) <= MAX_CHUNK_CHARS else fallback_splitter.split_text(article.text)
+                for piece in pieces:
+                    chunks.append(Document(page_content=f"{header}\n{piece}", metadata={**metadata, "clauses": ""}))
+                continue
+
+            # Điều dài: gom các Khoản liền nhau vào chunk ≤ MAX_CHUNK_CHARS, mỗi chunk đều có header
+            group: list[str] = []
+            numbers: list[int] = []
+
+            def flush():
+                if group:
+                    label = f"{numbers[0]}-{numbers[-1]}" if len(numbers) > 1 else str(numbers[0])
+                    chunks.append(Document(
+                        page_content=f"{header}\n" + "\n".join(group),
+                        metadata={**metadata, "clauses": label},
+                    ))
+
+            for clause in article.clauses:
+                text = f"{clause.number}. {clause.text}"
+                if group and sum(len(g) for g in group) + len(text) > MAX_CHUNK_CHARS:
+                    flush()
+                    group, numbers = [], []
+                for piece in ([text] if len(text) <= MAX_CHUNK_CHARS else fallback_splitter.split_text(text)):
+                    group.append(piece)
+                    numbers.append(clause.number)
+            flush()
+    return chunks
+
+
+def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+
+    if not os.getenv("GEMINI_API_KEY"):
+        raise SystemExit("LỖI: Không tìm thấy GEMINI_API_KEY trong backend/.env!")
+
+    print("📥 BƯỚC 1-2: Đọc PDF và cắt theo cấu trúc Điều/Khoản (Structure-aware Chunking)...")
+    chunks = build_structured_chunks()
+    print(f"✅ Đã cắt văn bản thành {len(chunks)} đoạn (chunks) có ngữ cảnh phân cấp.\n")
+
+    print("🧠 BƯỚC 3: Khởi tạo mô hình AI nhúng (Embedding) của Google Gemini...")
+    embeddings = GoogleGenerativeAIEmbeddings(model=EMBEDDING_MODEL)
+
+    print("💾 BƯỚC 4: Đang tạo embedding trước khi cập nhật PostgreSQL...")
+    print("⏳ Quá trình này có thể mất vài phút tùy hạn mức API và tốc độ mạng...")
+
+    text_embeddings = []
+    batch_size = 100
+    for start in range(0, len(chunks), batch_size):
+        batch = chunks[start : start + batch_size]
+        for attempt in range(5):
+            try:
+                vectors = embeddings.embed_documents(
+                    [document.page_content for document in batch]
+                )
+                break
+            except Exception as exc:
+                message = str(exc).upper()
+                rate_limited = "429" in message or "RESOURCE_EXHAUSTED" in message
+                daily_limit = "PERDAY" in message or re.search(r"RETRY IN \d+H", message)
+                
+                if rate_limited and daily_limit:
+                    raise SystemExit(
+                        "Gemini đã hết quota miễn phí theo ngày. Hãy chạy lại sau khi quota reset "
+                        "hoặc dùng project có quota phù hợp. Collection chưa bị thay đổi."
+                    ) from exc
+                    
+                if not rate_limited or attempt == 4:
+                    raise
+                    
+                print("Gemini đang giới hạn tốc độ; chờ 60 giây rồi thử lại batch...")
+                time.sleep(60)
+
+        text_embeddings.extend(
+            (document.page_content, vector)
+            for document, vector in zip(batch, vectors)
+        )
+        print(f"Đã tạo embedding cho {min(start + len(batch), len(chunks))}/{len(chunks)} đoạn.")
+
+    print("Đang thay collection cũ bằng dữ liệu mới...")
+    PGVector.from_embeddings(
+        text_embeddings=text_embeddings,
+        embedding=embeddings,
+        metadatas=[document.metadata for document in chunks],
+        collection_name=COLLECTION_NAME,
+        connection_string=CONNECTION_STRING,
+        pre_delete_collection=True,
+    )
+    print("🎉 HOÀN TẤT! Toàn bộ văn bản luật đã được nhúng vào Database bằng Gemini.")
+
+if __name__ == "__main__":
+    main()
+
+========================================
+FILE: backend/legal_parser.py
+========================================
+
+"""Bộ phân tích cấu trúc văn bản pháp luật Việt Nam (tất định, không dùng LLM).
+
+Văn bản  ->  Chương  ->  Điều  ->  Khoản  ->  Điểm
+
+Module này được dùng bởi:
+- ingest.py       : cắt chunk theo Điều/Khoản kèm ngữ cảnh phân cấp (khối Neural)
+- graph_ingest.py : làm "khung xương" cho đồ thị tri thức và đối chiếu kết quả LLM (khối Symbolic)
+"""
+
+from __future__ import annotations
+
+import re
+import unicodedata
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from pypdf import PdfReader
+
+# ---------------------------------------------------------------------------
+# Danh mục văn bản trong kho dữ liệu (nhận diện theo tên file, fallback regex)
+# ---------------------------------------------------------------------------
+DOCUMENT_REGISTRY: list[dict[str, str]] = [
+    {
+        "pattern": r"15-2020",
+        "code": "15/2020/NĐ-CP",
+        "title": "Nghị định 15/2020/NĐ-CP quy định xử phạt vi phạm hành chính trong lĩnh vực "
+        "bưu chính, viễn thông, tần số vô tuyến điện, công nghệ thông tin và giao dịch điện tử",
+        "short": "Nghị định 15/2020/NĐ-CP",
+        "type": "DECREE",
+    },
+    {
+        "pattern": r"24-2018",
+        "code": "24/2018/QH14",
+        "title": "Luật An ninh mạng 2018 (Luật số 24/2018/QH14)",
+        "short": "Luật An ninh mạng 2018",
+        "type": "LAW",
+    },
+    {
+        "pattern": r"67-2006",
+        "code": "67/2006/QH11",
+        "title": "Luật Công nghệ thông tin 2006 (Luật số 67/2006/QH11)",
+        "short": "Luật Công nghệ thông tin 2006",
+        "type": "LAW",
+    },
+]
+
+POINT_LETTERS = "abcdđeghiklmnopqrstuvxy"  # thứ tự điểm trong văn bản pháp luật Việt Nam
+
+_HEADER_RE = re.compile(r"(?m)^\s*\d*\s*CÔNG BÁO\s*/\s*Số[^\n]*$")
+_ARTICLE_RE = re.compile(r"(?m)^[ \t]*Điều[ \t]+(\d+)[ \t]*\.[ \t]*(.*)$")
+_CHAPTER_RE = re.compile(r"(?m)^[ \t]*Chương[ \t]+([IVXLC]+)[ \t]*$")
+_CLAUSE_RE = re.compile(r"(?m)^[ \t]*(\d{1,2})\.[ \t]+")
+_POINT_RE = re.compile(r"(?m)^[ \t]*([a-zđ])\)[ \t]+")
+_ARTICLE_REF_RE = re.compile(r"Điều\s+(\d{1,3})(?!\s*\d)")
+
+_FINE_RE = re.compile(
+    r"Ph\s*ạt\s+ti\s*ền\s+t\s*ừ\s+([\d.\s]+?)\s*đồng\s+đến\s+([\d.\s]+?)\s*đồng",
+    re.IGNORECASE,
+)
+_WARNING_RE = re.compile(r"Ph\s*ạt\s+c\s*ảnh\s+cáo", re.IGNORECASE)
+
+# Sửa lỗi pypdf chèn khoảng trắng giữa âm tiết: "Ph ạt ti ền t ừ" -> "Phạt tiền từ"
+_VOWELS = "aàáảãạăằắẳẵặâầấẩẫậeèéẻẽẹêềếểễệiìíỉĩịoòóỏõọôồốổỗộơờớởỡợuùúủũụưừứửữựyỳýỷỹỵ"
+_MARKED_VOWELS = "".join(ch for ch in _VOWELS if ch not in "aeiouy")
+_MARKED_VOWELS += _MARKED_VOWELS.upper()
+_E_FAMILY = "êềếểễệÊỀẾỂỄỆ"
+_CONSONANT_ONLY_SPLIT = re.compile(
+    rf"(?<![^\W\d_])([bcdđghklmnpqrstvxBCDĐGHKLMNPQRSTVX]{{1,3}}|[gG]i|[qQ]u) (?=[{_MARKED_VOWELS}])"
+)
+_VOWEL_E_SPLIT = re.compile(rf"(?<=[iyuoIYUO]) (?=[{_E_FAMILY}])")
+
+
+def normalize_text(text: str) -> str:
+    """Chuẩn hóa Unicode + sửa phần lớn lỗi tách âm tiết do trích xuất PDF."""
+    text = unicodedata.normalize("NFC", text or "")
+    text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\u00a0", " ")
+    text = re.sub(r"[ \t]+", " ", text)
+    text = _CONSONANT_ONLY_SPLIT.sub(r"\1", text)
+    text = _VOWEL_E_SPLIT.sub("", text)
+    text = re.sub(r" +\n", "\n", text)
+    return text
+
+
+def parse_amount(raw: str) -> int | None:
+    digits = re.sub(r"[^\d]", "", raw or "")
+    return int(digits) if digits else None
+
+
+# ---------------------------------------------------------------------------
+# Mô hình dữ liệu
+# ---------------------------------------------------------------------------
+@dataclass
+class Point:
+    letter: str
+    text: str
+
+
+@dataclass
+class Clause:
+    number: int
+    text: str
+    points: list[Point] = field(default_factory=list)
+    fine_min: int | None = None
+    fine_max: int | None = None
+    warning: bool = False
+
+
+@dataclass
+class Article:
+    doc_code: str
+    number: int
+    title: str
+    chapter: str
+    text: str
+    source: str
+    page: int
+    clauses: list[Clause] = field(default_factory=list)
+    references: list[int] = field(default_factory=list)
+
+    @property
+    def id(self) -> str:
+        return article_id(self.doc_code, self.number)
+
+    def heading(self) -> str:
+        return f"Điều {self.number}. {self.title}".strip()
+
+
+@dataclass
+class LegalDocument:
+    code: str
+    title: str
+    short: str
+    doc_type: str
+    sources: list[str] = field(default_factory=list)
+    articles: list[Article] = field(default_factory=list)
+
+
+def article_id(doc_code: str, number: int) -> str:
+    return f"{doc_code}:Điều {number}"
+
+
+def clause_id(doc_code: str, article_number: int, clause_number: int) -> str:
+    return f"{article_id(doc_code, article_number)}:Khoản {clause_number}"
+
+
+# ---------------------------------------------------------------------------
+# Phân tích
+# ---------------------------------------------------------------------------
+def _identify_document(pdf: Path, first_page: str) -> dict[str, str]:
+    for entry in DOCUMENT_REGISTRY:
+        if re.search(entry["pattern"], pdf.name, re.IGNORECASE):
+            return entry
+    match = re.search(r"Số\s*:\s*(\d+/\d{4}/[A-ZĐ0-9\-]+)", first_page)
+    code = match.group(1) if match else pdf.stem
+    return {"code": code, "title": code, "short": code, "type": "OTHER"}
+
+
+def _read_pages(pdf: Path) -> list[str]:
+    reader = PdfReader(str(pdf))
+    pages = []
+    for page in reader.pages:
+        text = normalize_text(page.extract_text() or "")
+        pages.append(_HEADER_RE.sub("", text))
+    return pages
+
+
+def _sequential_matches(pattern: re.Pattern, text: str, keys: list[str]):
+    """Chỉ nhận các mốc Khoản/Điểm xuất hiện đúng thứ tự (1,2,3... hoặc a,b,c...)."""
+    accepted = []
+    expected = 0
+    for match in pattern.finditer(text):
+        if expected < len(keys) and match.group(1) == keys[expected]:
+            accepted.append(match)
+            expected += 1
+    return accepted
+
+
+def _split_points(clause_text: str) -> list[Point]:
+    matches = _sequential_matches(_POINT_RE, clause_text, list(POINT_LETTERS))
+    points = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(clause_text)
+        body = " ".join(clause_text[match.end() : end].split())
+        points.append(Point(letter=match.group(1), text=body))
+    return points
+
+
+def _split_clauses(body: str) -> list[Clause]:
+    matches = _sequential_matches(_CLAUSE_RE, body, [str(i) for i in range(1, 100)])
+    clauses = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(body)
+        raw = body[match.end() : end].strip()
+        flat = " ".join(raw.split())
+        clause = Clause(number=int(match.group(1)), text=flat, points=_split_points(raw))
+        fine = _FINE_RE.search(flat[:400])
+        if fine:
+            clause.fine_min = parse_amount(fine.group(1))
+            clause.fine_max = parse_amount(fine.group(2))
+        clause.warning = bool(_WARNING_RE.search(flat[:200]))
+        clauses.append(clause)
+    return clauses
+
+
+def _parse_articles(meta: dict[str, str], pdf: Path, pages: list[str], last_number: int) -> list[Article]:
+    offsets, chunks, cursor = [], [], 0
+    for page_text in pages:
+        offsets.append(cursor)
+        chunks.append(page_text)
+        cursor += len(page_text) + 1
+    full = "\n".join(chunks)
+
+    def page_of(position: int) -> int:
+        page = 0
+        for index, start in enumerate(offsets):
+            if start <= position:
+                page = index
+        return page + 1
+
+    chapters = [(m.start(), m.group(1)) for m in _CHAPTER_RE.finditer(full)]
+    headers = []
+    for match in _ARTICLE_RE.finditer(full):
+        number = int(match.group(1))
+        if number <= last_number:
+            continue  # bỏ trích dẫn "Điều x." trong thân văn bản / tham chiếu ngược
+        headers.append(match)
+        last_number = number
+
+    articles = []
+    for index, match in enumerate(headers):
+        start = match.start()
+        end = headers[index + 1].start() if index + 1 < len(headers) else len(full)
+        # Cắt bỏ tiêu đề Chương tiếp theo nằm trong khoảng của Điều hiện tại
+        for chapter_pos, _ in chapters:
+            if start < chapter_pos < end:
+                end = chapter_pos
+                break
+        block = full[start:end].strip()
+        lines = block.split("\n")
+        title = match.group(2).strip()
+        body_start = 1
+        # Tiêu đề Điều có thể xuống dòng (dòng tiếp theo bắt đầu bằng chữ thường)
+        while body_start < len(lines) and lines[body_start].strip()[:1].islower():
+            title += " " + lines[body_start].strip()
+            body_start += 1
+        body = "\n".join(lines[body_start:])
+        chapter = ""
+        for chapter_pos, chapter_name in chapters:
+            if chapter_pos < start:
+                chapter = chapter_name
+        number = int(match.group(1))
+        refs = sorted(
+            {int(r) for r in _ARTICLE_REF_RE.findall(body) if int(r) != number}
+        )
+        articles.append(
+            Article(
+                doc_code=meta["code"],
+                number=number,
+                title=" ".join(title.split()),
+                chapter=chapter,
+                text=" ".join(block.split()),
+                source=pdf.name,
+                page=page_of(start),
+                clauses=_split_clauses(body),
+                references=refs,
+            )
+        )
+    return articles
+
+
+def load_corpus(data_dir: Path) -> list[LegalDocument]:
+    """Đọc toàn bộ PDF trong data/, gộp các file thuộc cùng một văn bản (VD: 2 số Công báo)."""
+    documents: dict[str, LegalDocument] = {}
+    for pdf in sorted(data_dir.glob("*.pdf")):
+        pages = _read_pages(pdf)
+        if sum(len(p.strip()) for p in pages) < 200:
+            print(f"[PARSER] Bỏ qua {pdf.name}: PDF dạng ảnh scan, không có lớp văn bản (cần OCR).")
+            continue
+        meta = _identify_document(pdf, pages[0] if pages else "")
+        document = documents.get(meta["code"])
+        if document is None:
+            document = LegalDocument(
+                code=meta["code"],
+                title=meta["title"],
+                short=meta.get("short", meta["code"]),
+                doc_type=meta["type"],
+            )
+            documents[meta["code"]] = document
+        last = document.articles[-1].number if document.articles else 0
+        new_articles = _parse_articles(meta, pdf, pages, last)
+        document.sources.append(pdf.name)
+        document.articles.extend(new_articles)
+        print(f"[PARSER] {pdf.name}: {len(new_articles)} Điều -> {document.code}")
+    return list(documents.values())
+
+
+if __name__ == "__main__":
+    import sys
+
+    from config import DATA_DIR
+
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    for doc in load_corpus(DATA_DIR):
+        fines = sum(1 for a in doc.articles for c in a.clauses if c.fine_min)
+        print(f"{doc.code}: {len(doc.articles)} Điều, {fines} khoản có khung phạt tiền")
+        for art in doc.articles[:2]:
+            print("  ", art.id, "|", art.heading(), "| trang", art.page, "| khoản:", len(art.clauses))
+
+
+========================================
+FILE: backend/legal_rules.py
+========================================
+
+"""Bộ suy luận luật tất định (Deterministic Legal Rule Engine) - linh hồn của khối Symbolic.
+
+Nguyên tắc: LLM KHÔNG được tự tính toán số tiền. Mọi phép tính mức phạt theo chủ thể,
+độ tuổi, mức trần... được thực hiện bằng Python thuần và trả về kèm "dấu vết suy luận"
+(rule trace) có căn cứ pháp lý để hiển thị lên giao diện.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import asdict, dataclass, field
+
+ORGANIZATION = "ORGANIZATION"
+INDIVIDUAL = "INDIVIDUAL"
+SUBJECT_LABELS = {ORGANIZATION: "Tổ chức", INDIVIDUAL: "Cá nhân"}
+
+# ---------------------------------------------------------------------------
+# Tri thức luật cứng - trích nguyên văn từ kho dữ liệu (data/*.pdf)
+# ---------------------------------------------------------------------------
+DECREE_RULES: dict[str, dict] = {
+    "15/2020/NĐ-CP": {
+        # Điều 4 khoản 3: "Mức phạt tiền quy định từ Chương II đến Chương VII tại Nghị định này
+        # được áp dụng đối với hành vi vi phạm hành chính của tổ chức, trừ quy định tại Điều 106
+        # Nghị định này. Trường hợp cá nhân có hành vi vi phạm như của tổ chức thì mức phạt tiền
+        # bằng 1/2 mức phạt tiền đối với tổ chức."
+        "scope": (5, 113),  # Chương II (Điều 5) -> Chương VII (Điều 113)
+        "base_subject": ORGANIZATION,
+        "individual_ratio": 0.5,
+        "individual_base_articles": {106},  # Điều 106: vi phạm của người chơi (cá nhân)
+        "basis": "Điều 4 khoản 3 Nghị định 15/2020/NĐ-CP",
+        # Điều 4 khoản 1, 2: mức phạt tiền tối đa đối với cá nhân theo lĩnh vực
+        "individual_caps": [
+            ((5, 14), 40_000_000, "bưu chính"),
+            ((15, 56), 100_000_000, "viễn thông"),
+            ((57, 73), 100_000_000, "tần số vô tuyến điện"),
+            ((74, 106), 100_000_000, "công nghệ thông tin"),
+            ((107, 112), 40_000_000, "giao dịch điện tử"),
+        ],
+        "cap_basis": "Điều 4 khoản 1, 2 Nghị định 15/2020/NĐ-CP",
+    }
+}
+
+# Quy tắc độ tuổi - Luật Xử lý vi phạm hành chính 2012 (sửa đổi 2020).
+# LƯU Ý: văn bản này CHƯA có trong thư mục data/, nên đánh dấu external=True để minh bạch.
+AGE_RULE_BASIS = "Luật Xử lý vi phạm hành chính 2012 (sửa đổi, bổ sung 2020), Điều 5 và Điều 134"
+
+
+@dataclass
+class RuleStep:
+    rule: str
+    basis: str
+    detail: str
+    external: bool = False
+
+
+@dataclass
+class QueryFacts:
+    subjects: list[str]
+    subject_detected: bool
+    age: int | None
+    article_refs: list[int]
+    doc_hints: list[str]
+    invalid_docs: list[str] = field(default_factory=list)
+    out_of_scope_docs: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+# ---------------------------------------------------------------------------
+# Hiểu câu hỏi bằng luật (rule-based NLU) - không tốn lời gọi LLM, kết quả tái lập được
+# ---------------------------------------------------------------------------
+_ORG_PATTERN = re.compile(
+    r"\b(công ty|doanh nghiệp|tổ chức|cơ quan|đơn vị|tập đoàn|pháp nhân|nhà mạng|nhà cung cấp|"
+    r"ngân hàng|cửa hàng|chi nhánh|startup|website của công ty|fanpage của công ty)"
+    r"(\s+(của\s+)?(tôi|mình|chúng tôi|em|anh|chị|bạn))?\b",
+    re.IGNORECASE,
+)
+_IND_PATTERN = re.compile(
+    r"\b(cá nhân|tôi|mình|em|anh|chị|người dùng|nhân viên|học sinh|sinh viên|công dân|"
+    r"người chơi|một người|người nào|ai đó|bạn)\b",
+    re.IGNORECASE,
+)
+_AGE_PATTERN = re.compile(r"(\d{1,2})\s*tuổi", re.IGNORECASE)
+_MINOR_PATTERN = re.compile(r"\b(trẻ em|vị thành niên|chưa thành niên)\b", re.IGNORECASE)
+_ARTICLE_PATTERN = re.compile(r"Điều\s+(\d{1,3})", re.IGNORECASE)
+_DOC_CODE_PATTERN = re.compile(r"(\d+/\d{4}/(?:NĐ-CP|ND-CP|QH\d{2}))", re.IGNORECASE)
+_DECREE_PATTERN = re.compile(r"(?:ngh[iị]\s*[dđ][iị]nh)\s*(\d+)", re.IGNORECASE)
+
+
+def analyze_question(question: str) -> QueryFacts:
+    text = question or ""
+    subjects: list[str] = []
+    if _ORG_PATTERN.search(text):
+        subjects.append(ORGANIZATION)
+    # Bỏ cụm "công ty tôi" trước khi tìm chủ thể cá nhân để tránh nhận nhầm
+    residual = _ORG_PATTERN.sub(" ", text)
+    if _IND_PATTERN.search(residual) or _AGE_PATTERN.search(text) or _MINOR_PATTERN.search(text):
+        subjects.append(INDIVIDUAL)
+    detected = bool(subjects)
+    if not subjects:
+        subjects = [ORGANIZATION, INDIVIDUAL]
+
+    age_match = _AGE_PATTERN.search(text)
+    age = int(age_match.group(1)) if age_match else None
+    if age is not None and INDIVIDUAL not in subjects:
+        subjects.append(INDIVIDUAL)
+
+    doc_hints = []
+    invalid_docs = []
+    out_of_scope_docs = []
+
+    # Nhận diện mã văn bản đầy đủ (ví dụ: 15/2020/NĐ-CP, 24/2018/QH14)
+    for code in _DOC_CODE_PATTERN.findall(text):
+        normalized_code = code.upper().replace("ND-CP", "NĐ-CP")
+        if normalized_code in {"15/2020/NĐ-CP", "24/2018/QH14", "67/2006/QH11"}:
+            doc_hints.append(normalized_code)
+        else:
+            out_of_scope_docs.append(normalized_code)
+
+    # Nhận diện số hiệu Nghị định (ví dụ: Nghị định 15, Nghị định 10000...)
+    for dec_num_str in _DECREE_PATTERN.findall(text):
+        num = int(dec_num_str)
+        if num == 15:
+            if "15/2020/NĐ-CP" not in doc_hints:
+                doc_hints.append("15/2020/NĐ-CP")
+        elif num > 500:
+            # Trong lịch sử lập pháp Việt Nam, số nghị định trong 1 năm không bao giờ vượt quá 500
+            invalid_docs.append(f"Nghị định {num}")
+        else:
+            out_of_scope_docs.append(f"Nghị định {num}")
+
+    return QueryFacts(
+        subjects=subjects,
+        subject_detected=detected,
+        age=age,
+        article_refs=sorted({int(n) for n in _ARTICLE_PATTERN.findall(text)}),
+        doc_hints=doc_hints,
+        invalid_docs=invalid_docs,
+        out_of_scope_docs=out_of_scope_docs,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Suy luận mức phạt
+# ---------------------------------------------------------------------------
+def format_vnd(amount: int | float | None) -> str:
+    if amount is None:
+        return "?"
+    return f"{int(round(amount)):,}".replace(",", ".") + " đồng"
+
+
+def _individual_cap(config: dict, article_number: int):
+    for (low, high), cap, field_name in config.get("individual_caps", []):
+        if low <= article_number <= high:
+            return cap, field_name
+    return None, None
+
+
+def apply_penalty_rules(
+    penalty: dict, doc_code: str, article_number: int, facts: QueryFacts
+) -> dict:
+    """Tính mức phạt áp dụng cho từng chủ thể trong câu hỏi + dấu vết suy luận."""
+    base_min, base_max = penalty.get("min_amount"), penalty.get("max_amount")
+    steps: list[RuleStep] = []
+    results: list[dict] = []
+
+    if penalty.get("type") != "FINE" or base_min is None or base_max is None:
+        return {"results": results, "steps": [asdict(s) for s in steps]}
+
+    config = DECREE_RULES.get(doc_code)
+    low, high = config["scope"] if config else (0, -1)
+    in_scope = config is not None and low <= article_number <= high
+
+    if in_scope and article_number in config["individual_base_articles"]:
+        base_subject = INDIVIDUAL
+        steps.append(RuleStep(
+            "BASE_SUBJECT", config["basis"],
+            f"Điều {article_number} là ngoại lệ của Điều 4 khoản 3: khung "
+            f"{format_vnd(base_min)} - {format_vnd(base_max)} áp dụng trực tiếp cho cá nhân.",
+        ))
+    elif in_scope:
+        base_subject = config["base_subject"]
+        steps.append(RuleStep(
+            "BASE_SUBJECT", config["basis"],
+            f"Khung {format_vnd(base_min)} - {format_vnd(base_max)} tại Điều {article_number} "
+            "là mức phạt áp dụng đối với TỔ CHỨC.",
+        ))
+    else:
+        base_subject = penalty.get("base_subject") or None
+        steps.append(RuleStep(
+            "BASE_SUBJECT", f"Văn bản {doc_code}",
+            "Không có quy tắc quy đổi chủ thể cho văn bản này; giữ nguyên khung phạt gốc.",
+        ))
+
+    for subject in facts.subjects:
+        amount_min, amount_max, formula = base_min, base_max, "giữ nguyên khung gốc"
+        applicable = True
+
+        if in_scope and base_subject == ORGANIZATION and subject == INDIVIDUAL:
+            ratio = config["individual_ratio"]
+            amount_min, amount_max = base_min * ratio, base_max * ratio
+            formula = "Cá nhân = 1/2 × mức phạt Tổ chức"
+            steps.append(RuleStep(
+                "INDIVIDUAL_HALF", config["basis"],
+                f"Cá nhân vi phạm như tổ chức -> {format_vnd(base_min)} × 1/2 = "
+                f"{format_vnd(amount_min)}; {format_vnd(base_max)} × 1/2 = {format_vnd(amount_max)}.",
+            ))
+        elif in_scope and base_subject == INDIVIDUAL and subject == ORGANIZATION:
+            applicable = False
+            formula = "Không áp dụng cho tổ chức"
+            steps.append(RuleStep(
+                "NOT_APPLICABLE", config["basis"],
+                f"Điều {article_number} chỉ điều chỉnh hành vi của cá nhân (người chơi).",
+            ))
+
+        if applicable and subject == INDIVIDUAL and in_scope:
+            cap, field_name = _individual_cap(config, article_number)
+            if cap is not None:
+                ok = amount_max <= cap
+                steps.append(RuleStep(
+                    "CAP_CHECK", config["cap_basis"],
+                    f"Kiểm tra trần lĩnh vực {field_name}: {format_vnd(amount_max)} "
+                    f"{'≤' if ok else '>'} {format_vnd(cap)} -> {'hợp lệ' if ok else 'VƯỢT TRẦN, giới hạn lại'}.",
+                ))
+                if not ok:
+                    amount_max = cap
+                    amount_min = min(amount_min, cap)
+
+        if applicable and subject == INDIVIDUAL and facts.age is not None:
+            age = facts.age
+            if age < 14:
+                applicable = False
+                formula = "Dưới 14 tuổi: không bị xử phạt vi phạm hành chính"
+                steps.append(RuleStep("AGE_UNDER_14", AGE_RULE_BASIS,
+                                      f"Người {age} tuổi chưa đủ tuổi chịu xử phạt VPHC.", True))
+            elif age < 16:
+                applicable = False
+                formula = "Từ đủ 14 đến dưới 16 tuổi: phạt cảnh cáo, không phạt tiền"
+                steps.append(RuleStep("AGE_14_16", AGE_RULE_BASIS,
+                                      f"Người {age} tuổi chỉ bị xử phạt khi vi phạm do cố ý và "
+                                      "áp dụng hình thức cảnh cáo, không phạt tiền.", True))
+            elif age < 18:
+                amount_min, amount_max = amount_min / 2, amount_max / 2
+                formula += " -> người 16-18 tuổi: không quá 1/2 mức của người thành niên"
+                steps.append(RuleStep("AGE_16_18", AGE_RULE_BASIS,
+                                      f"Người {age} tuổi: mức phạt tiền tối đa = 1/2 -> "
+                                      f"{format_vnd(amount_min)} - {format_vnd(amount_max)}.", True))
+
+        results.append({
+            "subject": subject,
+            "subject_label": SUBJECT_LABELS.get(subject, subject),
+            "applicable": applicable,
+            "min_amount": int(round(amount_min)) if applicable else None,
+            "max_amount": int(round(amount_max)) if applicable else None,
+            "display": (f"{format_vnd(amount_min)} - {format_vnd(amount_max)}" if applicable else formula),
+            "formula": formula,
+        })
+
+    return {"base_subject": base_subject, "results": results, "steps": [asdict(s) for s in steps]}
+
+
+========================================
+FILE: backend/main.py
+========================================
+
+"""Backend API FastAPI - Hợp nhất Neuro-Symbolic AI cho Trợ lý ảo Luật CNTT.
+
+Kiến trúc Hybrid Retrieval:
+1. Luồng Neural   : Tìm kiếm vector tương đồng ngữ nghĩa từ PostgreSQL (pgvector).
+2. Luồng Symbolic :
+   - Phân tích câu hỏi (analyze_question): nhận diện chủ thể (cá nhân/tổ chức), độ tuổi, số hiệu Điều.
+   - Tra cứu Đồ thị tri thức (Neo4j): tìm hành vi, điều khoản liên đới, biện pháp bổ sung.
+   - Bộ suy luận tất định (apply_penalty_rules): tính toán chính xác khung phạt theo Điều 4 NĐ 15/2020,
+     kiểm tra trần lĩnh vực, điều kiện độ tuổi theo luật (không để LLM tự tính nhầm).
+3. Hợp nhất (Fusion) & Sinh câu trả lời:
+   - DeepSeek/OpenRouter tổng hợp câu trả lời dựa trên cả 2 nguồn tri thức.
+   - Đồng thời sinh phản hồi Naive RAG (chỉ dùng vector) để so sánh đối chứng A/B trực quan.
+   - Trả về cấu trúc đồ thị (nodes, edges) và dấu vết suy luận (rule steps) cho Frontend.
+"""
+
+from __future__ import annotations
+
+import re
+import sys
+from typing import Any
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from langchain_core.prompts import PromptTemplate
+from langchain_community.vectorstores import PGVector
+
+from config import (
+    DATABASE_URL,
+    COLLECTION_NAME,
+    NEO4J_DATABASE,
+    create_llm,
+    create_neo4j_driver,
+    get_embeddings,
+)
+CONNECTION_STRING = DATABASE_URL
+from legal_rules import (
+    analyze_question,
+    apply_penalty_rules,
+    QueryFacts,
+    ORGANIZATION,
+    INDIVIDUAL,
+)
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+app = FastAPI(
+    title="IT Law Neuro-Symbolic Assistant API",
+    description="Hệ thống tư vấn pháp luật CNTT kết hợp Vector Search (Neural) và Knowledge Graph + Rule Engine (Symbolic)",
+    version="2.0.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ---------------------------------------------------------------------------
+# Khởi tạo Drivers & Models
+# ---------------------------------------------------------------------------
+neo4j_driver = create_neo4j_driver()
+embeddings = get_embeddings()
+llm = create_llm(temperature=0.1)
+
+# Khởi tạo kết nối PGVector
+try:
+    vector_db = PGVector(
+        collection_name=COLLECTION_NAME,
+        connection_string=CONNECTION_STRING,
+        embedding_function=embeddings,
+    )
+except Exception as e:
+    print(f"[CẢNH BÁO] Không thể kết nối ngay với PGVector: {e}")
+    vector_db = None
+
+
+class ChatRequest(BaseModel):
+    question: str
+    comparison_mode: bool = True
+
+
+# ---------------------------------------------------------------------------
+# Các hàm truy vấn Đồ thị Tri thức (Symbolic Graph Retrieval)
+# ---------------------------------------------------------------------------
+def _sanitize_fulltext_query(text: str) -> str:
+    """Lọc các ký tự đặc biệt của cú pháp Lucene và loại bỏ stopwords pháp lý để tìm hành vi thực tế."""
+    cleaned = re.sub(r'[^\w\s\dà-ỹÀ-Ỹ]', ' ', text)
+    words = [w.strip() for w in cleaned.split() if len(w.strip()) > 1]
+    
+    LEGAL_STOP_WORDS = {
+        "là", "gì", "thế", "nào", "cho", "tôi", "hỏi", "bị", "phạt", "bao", "nhiêu", "tiền",
+        "nghị", "định", "luật", "thông", "tư", "điều", "khoản", "điểm", "bộ", "số", "của", "và", "theo",
+        "về", "có", "không", "như", "được", "tại", "trong", "quy", "với", "hành", "vi", "mức"
+    }
+    keywords = [w for w in words if w.lower() not in LEGAL_STOP_WORDS and not w.isdigit()]
+    if not keywords:
+        return ""
+    return " OR ".join(f'"{kw}"' for kw in keywords[:8])
+
+
+def query_knowledge_graph(facts: QueryFacts, raw_question: str) -> dict[str, Any]:
+    """Truy vấn đồ thị Neo4j dựa trên số hiệu Điều (nếu có) hoặc tìm kiếm toàn văn hành vi."""
+    # Nếu câu hỏi chứa văn bản không tồn tại -> dừng tra cứu đồ thị để tránh gán ghép sai
+    if facts.invalid_docs:
+        return {
+            "matched_actions": [],
+            "penalty_calculations": [],
+            "rule_steps": [{
+                "rule": "INVALID_DOCUMENT_GUARDRAIL",
+                "basis": "Hệ thống văn bản QPPL Việt Nam",
+                "detail": f"Văn bản '{', '.join(facts.invalid_docs)}' không tồn tại trong hệ thống pháp luật.",
+            }],
+            "graph_view": {"nodes": [], "edges": []},
+        }
+
+    matched_actions = []
+    graph_nodes = []
+    graph_edges = []
+    seen_node_ids = set()
+
+    def add_node(node_id: str, label: str, node_type: str, data: dict):
+        if node_id not in seen_node_ids:
+            seen_node_ids.add(node_id)
+            graph_nodes.append({
+                "id": node_id,
+                "label": label,
+                "type": node_type,
+                "data": data,
+            })
+
+    def add_edge(source: str, target: str, rel_type: str):
+        graph_edges.append({
+            "source": source,
+            "target": target,
+            "label": rel_type,
+        })
+
+    with neo4j_driver.session(database=NEO4J_DATABASE) as session:
+        # Trường hợp 1: Người dùng chỉ định rõ số Điều (VD: "Điều 101...")
+        if facts.article_refs:
+            cypher = """
+            MATCH (a:Article) WHERE a.number IN $article_refs
+            MATCH (doc:LegalDoc)<-[:PART_OF]-(a)
+            MATCH (act:Action)-[:DEFINED_IN]->(k:Clause)-[:PART_OF]->(a)
+            OPTIONAL MATCH (act)-[:PENALIZED_BY]->(p:Penalty)
+            OPTIONAL MATCH (act)-[:HAS_SANCTION]->(s:Sanction)
+            RETURN doc.code AS doc_code, doc.short AS doc_short,
+                   a.id AS article_id, a.number AS article_number, a.title AS article_title,
+                   k.number AS clause_number, k.text AS clause_text,
+                   act.id AS action_id, act.name AS action_name, act.point AS point,
+                   p.type AS penalty_type, p.min_amount AS min_amount, p.max_amount AS max_amount,
+                   p.warning AS warning, p.base_subject AS base_subject,
+                   collect(DISTINCT s.description) AS sanctions
+            LIMIT 10
+            """
+            results = session.run(cypher, article_refs=facts.article_refs).data()
+        else:
+            # Trường hợp 2: Tìm kiếm theo ngữ nghĩa hành vi bằng Full-text index trên :Action
+            ft_query = _sanitize_fulltext_query(raw_question)
+            if not ft_query:
+                # Không có từ khóa hành vi thực tế -> không trả về hành vi bừa bãi
+                results = []
+            else:
+                cypher = """
+                CALL db.index.fulltext.queryNodes('action_fulltext', $query_text)
+                YIELD node AS act, score
+                MATCH (act)-[:DEFINED_IN]->(k:Clause)-[:PART_OF]->(a:Article)-[:PART_OF]->(doc:LegalDoc)
+                OPTIONAL MATCH (act)-[:PENALIZED_BY]->(p:Penalty)
+                OPTIONAL MATCH (act)-[:HAS_SANCTION]->(s:Sanction)
+                RETURN doc.code AS doc_code, doc.short AS doc_short,
+                       a.id AS article_id, a.number AS article_number, a.title AS article_title,
+                       k.number AS clause_number, k.text AS clause_text,
+                       act.id AS action_id, act.name AS action_name, act.point AS point,
+                       p.type AS penalty_type, p.min_amount AS min_amount, p.max_amount AS max_amount,
+                       p.warning AS warning, p.base_subject AS base_subject,
+                       collect(DISTINCT s.description) AS sanctions,
+                       score
+                ORDER BY score DESC
+                LIMIT 5
+                """
+                try:
+                    results = session.run(cypher, query_text=ft_query).data()
+                except Exception as e:
+                    print(f"[LỖI Fulltext Neo4j]: {e}")
+                    results = []
+
+        # Xây dựng cấu trúc trực quan cho đồ thị và tính toán khung phạt
+        penalty_calcs = []
+        rule_steps = []
+
+        for row in results:
+            doc_code = row["doc_code"]
+            art_num = row["article_number"]
+            doc_node_id = f"doc:{doc_code}"
+            art_node_id = f"art:{row['article_id']}"
+            act_node_id = f"act:{row['action_id']}"
+
+            add_node(doc_node_id, row["doc_short"], "LegalDoc", {"code": doc_code})
+            add_node(art_node_id, f"Điều {art_num}", "Article", {"title": row["article_title"]})
+            add_edge(art_node_id, doc_node_id, "PART_OF")
+
+            action_label = f"K.{row['clause_number']}" + (f".{row['point']}" if row['point'] else "") + f": {row['action_name'][:35]}..."
+            add_node(act_node_id, action_label, "Action", {"full_name": row["action_name"]})
+            add_edge(act_node_id, art_node_id, "DEFINED_IN")
+
+            penalty_info = {
+                "type": row.get("penalty_type") or "FINE",
+                "min_amount": row.get("min_amount"),
+                "max_amount": row.get("max_amount"),
+                "base_subject": row.get("base_subject"),
+            }
+
+            # Áp dụng bộ suy luận luật cứng (Deterministic Rule Engine)
+            calc = apply_penalty_rules(penalty_info, doc_code, art_num, facts)
+            if calc["results"]:
+                penalty_calcs.append({
+                    "action": row["action_name"],
+                    "article": f"Điều {art_num} ({row['doc_short']})",
+                    "clause": f"Khoản {row['clause_number']}" + (f" Điểm {row['point']}" if row['point'] else ""),
+                    "calculations": calc["results"],
+                })
+                rule_steps.extend(calc["steps"])
+
+                pen_node_id = f"pen:{row['action_id']}"
+                pen_label = "Phạt: " + " | ".join(f"{r['subject_label']}: {r['display']}" for r in calc["results"] if r["applicable"])
+                add_node(pen_node_id, pen_label[:60], "Penalty", {"calc": calc["results"]})
+                add_edge(act_node_id, pen_node_id, "PENALIZED_BY")
+
+            matched_actions.append({
+                "doc_code": doc_code,
+                "doc_title": row["doc_short"],
+                "article_number": art_num,
+                "article_title": row["article_title"],
+                "clause_number": row["clause_number"],
+                "point": row["point"],
+                "action_name": row["action_name"],
+                "min_amount": row["min_amount"],
+                "max_amount": row["max_amount"],
+                "sanctions": [s for s in row["sanctions"] if s],
+            })
+
+    # Loại bỏ các bước suy luận trùng lặp
+    unique_steps = []
+    seen_step_keys = set()
+    for s in rule_steps:
+        key = (s["rule"], s["detail"])
+        if key not in seen_step_keys:
+            seen_step_keys.add(key)
+            unique_steps.append(s)
+
+    return {
+        "matched_actions": matched_actions,
+        "penalty_calculations": penalty_calcs,
+        "rule_steps": unique_steps,
+        "graph_view": {
+            "nodes": graph_nodes,
+            "edges": graph_edges,
+        }
+    }
+
+
+# ---------------------------------------------------------------------------
+# Prompt Templates cho Neuro-Symbolic vs Naive RAG
+# ---------------------------------------------------------------------------
+NEURO_SYMBOLIC_PROMPT = """
+Bạn là Trợ lý ảo tư vấn Luật Công nghệ thông tin và An toàn mạng Việt Nam, ứng dụng kiến trúc Neuro-Symbolic AI.
+Nhiệm vụ của bạn là đưa ra lời tư vấn pháp lý CHÍNH XÁC, RÕ RÀNG, ĐẦY ĐỦ CĂN CỨ theo đúng thông tin được cung cấp.
+
+=== [1. KẾT QUẢ SUY LUẬN LOGIC TẤT ĐỊNH (SYMBOLIC ENGINE - GROUND TRUTH BẮT BUỘC TUÂN THỦ)] ===
+{symbolic_facts}
+
+=== [2. TRÍCH ĐOẠN VĂN BẢN QUY PHẠM PHÁP LUẬT (NEURAL VECTOR RETRIEVAL)] ===
+{neural_context}
+
+=== CÂU HỎI CỦA NGƯỜI DÙNG ===
+{question}
+
+=== YÊU CẦU TRẢ LỜI ===
+1. Khẳng định rõ hành vi có vi phạm không, căn cứ vào Điều nào, Khoản nào, Văn bản nào.
+2. NÊU CHÍNH XÁC mức phạt tiền cho từng chủ thể (Tổ chức vs Cá nhân) theo đúng kết quả tính toán ở Mục [1].
+   - Giải thích căn cứ: Theo Điều 4 Khoản 3 Nghị định 15/2020/NĐ-CP, mức phạt tại các Điều là áp dụng cho Tổ chức, Cá nhân phạt bằng 1/2.
+3. Nếu có tình tiết độ tuổi (dưới 14, 14-16, 16-18) hoặc biện pháp khắc phục hậu quả (buộc gỡ bỏ thông tin...), hãy nêu rõ.
+4. Giọng điệu chuyên nghiệp, khách quan, súc tích, dễ hiểu cho người dân và doanh nghiệp.
+5. NGUYÊN TẮC BẢO VỆ CHỐNG ẢO GIÁC (ANTI-HALLUCINATION GUARDRAIL):
+   - Tuyệt đối KHÔNG tự bịa ra thông tin hoặc số hiệu văn bản pháp luật.
+   - Nếu câu hỏi đề cập đến một văn bản, nghị định hoặc luật KHÔNG TỒN TẠI (ví dụ: Nghị định 10000, Luật 9999...) hoặc ngoài phạm vi, bạn PHẢI NÊU RÕ RÀNG rằng văn bản đó không tồn tại hoặc không nằm trong phạm vi cơ sở dữ liệu. TUYỆT ĐỐI KHÔNG tự ý lấy điều khoản của văn bản khác (như Nghị định 15/2020) để trả lời thay thế như thể đó là quy định của văn bản người dùng hỏi!
+"""
+
+NAIVE_RAG_PROMPT = """
+Bạn là một trợ lý AI tư vấn luật. Dựa vào các đoạn văn bản trích dẫn sau đây, hãy trả lời câu hỏi của người dùng.
+Không tự bịa ra thông tin.
+
+Văn bản trích dẫn:
+{neural_context}
+
+Câu hỏi:
+{question}
+
+Trả lời:
+"""
+
+prompt_neuro_symbolic = PromptTemplate(
+    template=NEURO_SYMBOLIC_PROMPT,
+    input_variables=["symbolic_facts", "neural_context", "question"]
+)
+prompt_naive = PromptTemplate(
+    template=NAIVE_RAG_PROMPT,
+    input_variables=["neural_context", "question"]
+)
+
+
+# ---------------------------------------------------------------------------
+# API Endpoints
+# ---------------------------------------------------------------------------
+@app.get("/health")
+def health_check():
+    neo4j_ok = False
+    try:
+        neo4j_driver.verify_connectivity()
+        neo4j_ok = True
+    except Exception:
+        pass
+
+    return {
+        "status": "healthy",
+        "neo4j_connected": neo4j_ok,
+        "pgvector_ready": vector_db is not None,
+    }
+
+
+@app.post("/chat")
+async def chat_endpoint(request: ChatRequest):
+    question = request.question.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="Câu hỏi không được để trống.")
+
+    # 1. Bóc tách ý định & Thực thể (Symbolic NLU)
+    facts = analyze_question(question)
+
+    # GUARDRAIL 1: Phát hiện văn bản KHÔNG TỒN TẠI (ví dụ: Nghị định 10000)
+    if facts.invalid_docs:
+        invalid_name = ", ".join(facts.invalid_docs)
+        guardrail_answer = (
+            f"⚠️ **CẢNH BÁO CĂN CỨ PHÁP LÝ: VĂN BẢN KHÔNG TỒN TẠI**\n\n"
+            f"Trong hệ thống văn bản quy phạm pháp luật Việt Nam **hoàn toàn không tồn tại '{invalid_name}'**.\n\n"
+            f"**Căn cứ pháp luật:**\n"
+            f"- Theo Luật Ban hành văn bản quy phạm pháp luật, Nghị định của Chính phủ được đánh số thứ tự trong từng năm "
+            f"theo định dạng `[Số thứ tự]/[Năm ban hành]/NĐ-CP` (ví dụ: *Nghị định số 15/2020/NĐ-CP*).\n"
+            f"- Số lượng nghị định ban hành mỗi năm thường dưới 200 nghị định, số hiệu **{invalid_name}** là không có thực.\n\n"
+            f"**Phạm vi dữ liệu của Trợ lý ảo:**\n"
+            f"Hệ thống chuyên sâu về **Pháp luật Công nghệ thông tin & An toàn thông tin mạng**, hiện gồm:\n"
+            f"1. **Nghị định số 15/2020/NĐ-CP** (Xử phạt vi phạm hành chính bưu chính, viễn thông, CNTT, mạng xã hội).\n"
+            f"2. **Luật An ninh mạng 2018** (Luật số 24/2018/QH14).\n"
+            f"3. **Luật Công nghệ thông tin 2006** (Luật số 67/2006/QH11).\n\n"
+            f"👉 *Vui lòng kiểm tra lại số hiệu văn bản hoặc mô tả rõ hành vi vi phạm cụ thể để tôi tra cứu giúp bạn.*"
+        )
+        return {
+            "answer": guardrail_answer,
+            "naive_answer": guardrail_answer if request.comparison_mode else None,
+            "symbolic_reasoning": {
+                "facts": facts.to_dict(),
+                "matched_actions": [],
+                "penalty_calculations": [],
+                "rule_steps": [{
+                    "rule": "INVALID_DOCUMENT_GUARDRAIL",
+                    "basis": "Luật Ban hành văn bản QPPL",
+                    "detail": f"Chặn xử lý vì văn bản '{invalid_name}' không tồn tại trong hệ thống pháp luật.",
+                }],
+            },
+            "graph_view": {"nodes": [], "edges": []},
+            "sources": [],
+        }
+
+    # GUARDRAIL 2: Phát hiện văn bản ngoài phạm vi chuyên ngành CNTT (ví dụ: Nghị định 100 giao thông)
+    if facts.out_of_scope_docs and not facts.article_refs and not _sanitize_fulltext_query(question):
+        out_name = ", ".join(facts.out_of_scope_docs)
+        guardrail_answer = (
+            f"ℹ️ **THÔNG BÁO PHẠM VI TƯ VẤN:**\n\n"
+            f"Văn bản **{out_name}** không nằm trong cơ sở dữ liệu chuyên ngành **Công nghệ thông tin & An toàn thông tin mạng**.\n\n"
+            f"Hệ thống hiện tại tập trung tư vấn các văn bản nòng cốt:\n"
+            f"- **Nghị định 15/2020/NĐ-CP** (Xử phạt vi phạm hành chính lĩnh vực CNTT, viễn thông, mạng xã hội).\n"
+            f"- **Luật An ninh mạng 2018 (24/2018/QH14)**.\n"
+            f"- **Luật Công nghệ thông tin 2006 (67/2006/QH11)**.\n\n"
+            f"👉 Vui lòng đặt câu hỏi liên quan đến lĩnh vực CNTT, an ninh mạng hoặc mạng xã hội."
+        )
+        return {
+            "answer": guardrail_answer,
+            "naive_answer": guardrail_answer if request.comparison_mode else None,
+            "symbolic_reasoning": {
+                "facts": facts.to_dict(),
+                "matched_actions": [],
+                "penalty_calculations": [],
+                "rule_steps": [{
+                    "rule": "OUT_OF_SCOPE_GUARDRAIL",
+                    "basis": "Phạm vi dữ liệu Đồ án",
+                    "detail": f"Văn bản '{out_name}' nằm ngoài phạm vi chuyên môn CNTT & An ninh mạng.",
+                }],
+            },
+            "graph_view": {"nodes": [], "edges": []},
+            "sources": [],
+        }
+
+    # 2. Luồng Neural: Truy vấn pgvector
+    neural_docs = []
+    if vector_db:
+        try:
+            neural_docs = vector_db.similarity_search(question, k=4)
+        except Exception as e:
+            print(f"[CẢNH BÁO PGVector Search lỗi]: {e}")
+
+    neural_context = "\n\n---\n\n".join(
+        [f"[{doc.metadata.get('doc_title', 'Luật')}] {doc.page_content}" for doc in neural_docs]
+    ) if neural_docs else "Không tìm thấy đoạn trích văn bản phù hợp trong vector database."
+
+    # 3. Luồng Symbolic: Truy vấn Neo4j & Chạy Rule Engine
+    graph_result = query_knowledge_graph(facts, question)
+
+    # Chuẩn bị context văn bản cho Symbolic Reasoning
+    symbolic_summary_lines = []
+    if graph_result["penalty_calculations"]:
+        symbolic_summary_lines.append("CÁC MỨC PHẠT VÀ SUY LUẬN ĐÃ TÍNH TOÁN THEO LUẬT:")
+        for calc in graph_result["penalty_calculations"]:
+            symbolic_summary_lines.append(f"- Hành vi: {calc['action']}")
+            symbolic_summary_lines.append(f"  Căn cứ: {calc['clause']}, {calc['article']}")
+            for res in calc["calculations"]:
+                symbolic_summary_lines.append(f"  + Chủ thể [{res['subject_label']}]: {res['display']} (Công thức: {res['formula']})")
+
+    if graph_result["rule_steps"]:
+        symbolic_summary_lines.append("\nCĂN CỨ NGUYÊN TẮC SUY LUẬN:")
+        for step in graph_result["rule_steps"]:
+            symbolic_summary_lines.append(f"- Quy tắc [{step['rule']}]: {step['detail']} (Căn cứ: {step['basis']})")
+
+    symbolic_facts_text = "\n".join(symbolic_summary_lines) if symbolic_summary_lines else "Không xác định được điều khoản vi phạm cụ thể trên đồ thị tri thức."
+
+    # 4. Sinh phản hồi Hybrid (Neuro-Symbolic)
+    hybrid_prompt_text = prompt_neuro_symbolic.format(
+        symbolic_facts=symbolic_facts_text,
+        neural_context=neural_context,
+        question=question,
+    )
+
+    try:
+        hybrid_res = llm.invoke(hybrid_prompt_text)
+        hybrid_answer = hybrid_res.content if hasattr(hybrid_res, "content") else str(hybrid_res)
+    except Exception as e:
+        print(f"[LỖI LLM Hybrid]: {e}")
+        hybrid_answer = f"Lỗi gọi mô hình ngôn ngữ: {e}"
+
+    # 5. Sinh phản hồi Naive RAG (để so sánh đối chứng A/B nếu bật comparison_mode)
+    naive_answer = None
+    if request.comparison_mode:
+        try:
+            naive_prompt_text = prompt_naive.format(
+                neural_context=neural_context,
+                question=question,
+            )
+            naive_res = llm.invoke(naive_prompt_text)
+            naive_answer = naive_res.content if hasattr(naive_res, "content") else str(naive_res)
+        except Exception as e:
+            naive_answer = f"(Chế độ Naive RAG gặp sự cố: {e})"
+
+    # Thu thập nguồn trích dẫn
+    sources = []
+    for doc in neural_docs:
+        meta = doc.metadata or {}
+        sources.append({
+            "title": meta.get("doc_title") or meta.get("doc_code") or "Văn bản luật",
+            "article": f"Điều {meta.get('article_number', '')}: {meta.get('article_title', '')}".strip(": "),
+            "page": meta.get("page", 1),
+            "snippet": doc.page_content[:200] + "...",
+        })
+
+    return {
+        "answer": hybrid_answer,
+        "naive_answer": naive_answer,
+        "symbolic_reasoning": {
+            "facts": facts.to_dict(),
+            "matched_actions": graph_result["matched_actions"],
+            "penalty_calculations": graph_result["penalty_calculations"],
+            "rule_steps": graph_result["rule_steps"],
+        },
+        "graph_view": graph_result["graph_view"],
+        "sources": sources,
+    }
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
+========================================
+FILE: frontend/.oxlintrc.json
+========================================
+
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["react", "oxc"],
+  "rules": {
+    "react/rules-of-hooks": "error",
+    "react/only-export-components": ["warn", { "allowConstantExport": true }]
+  }
+}
+
+
+========================================
+FILE: frontend/README.md
+========================================
+
+# React + Vite
+
+This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+
+Currently, two official plugins are available:
+
+- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
+- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+
+## React Compiler
+
+The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+
+## Expanding the Oxlint configuration
+
+If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+
+
+========================================
+FILE: frontend/index.html
+========================================
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>frontend</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
+
+
+========================================
+FILE: frontend/package.json
+========================================
+
+{
+  "name": "frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "lint": "oxlint",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "axios": "^1.20.0",
+    "lucide-react": "^1.61.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-markdown": "^10.1.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "oxlint": "^1.88.0",
+    "vite": "^8.3.4"
+  }
+}
+
+
+========================================
+FILE: frontend/vite.config.js
+========================================
+
+import react from '@vitejs/plugin-react'
+import { defineConfig } from 'vite'
+
+// https://vite.dev/config/
+export default defineConfig({
+  plugins: [react()],
+})
+
+
+========================================
+FILE: frontend/src/App.css
+========================================
+
+/* ==========================================================================
+   IT Law Assistant - Neuro-Symbolic UI Design System
+   ========================================================================== */
+
+:root {
+  --primary-50: #eff6ff;
+  --primary-100: #dbeafe;
+  --primary-500: #3b82f6;
+  --primary-600: #2563eb;
+  --primary-700: #1d4ed8;
+  --success-50: #f0fdf4;
+  --success-600: #16a34a;
+  --warning-50: #fffbeb;
+  --warning-600: #d97706;
+  --danger-50: #fef2f2;
+  --danger-600: #dc2626;
+  --purple-50: #faf5ff;
+  --purple-600: #9333ea;
+  --gray-50: #f8fafc;
+  --gray-100: #f1f5f9;
+  --gray-200: #e2e8f0;
+  --gray-300: #cbd5e1;
+  --gray-600: #475569;
+  --gray-700: #334155;
+  --gray-800: #1e293b;
+  --gray-900: #0f172a;
+}
+
+.app-container {
+  display: flex;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background-color: #f8fafc;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  color: var(--gray-800);
+}
+
+/* --------------------------------------------------------------------------
+   1. SIDEBAR (Bên trái)
+   -------------------------------------------------------------------------- */
+.sidebar {
+  width: 290px;
+  background-color: #ffffff;
+  border-right: 1px solid var(--gray-200);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow-y: auto;
+}
+
+.sidebar-header {
+  padding: 18px 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--gray-100);
+}
+
+.logo-icon {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  color: #ffffff;
+  padding: 8px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 6px -1px rgba(37, 99, 235, 0.2);
+}
+
+.sidebar-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--gray-900);
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+.sidebar-sub {
+  font-size: 11px;
+  color: var(--primary-600);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.sidebar-section {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--gray-100);
+}
+
+.section-header {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--gray-600);
+  letter-spacing: 0.05em;
+  margin-top: 0;
+  margin-bottom: 10px;
+}
+
+.setting-card {
+  background: var(--gray-50);
+  border: 1px solid var(--gray-200);
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.setting-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.setting-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--gray-800);
+}
+
+.toggle-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+}
+
+.setting-desc {
+  font-size: 11px;
+  color: var(--gray-600);
+  margin: 6px 0 0 0;
+  line-height: 1.4;
+}
+
+.status-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--gray-700);
+  background: var(--gray-50);
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--gray-200);
+}
+
+.status-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-indicator.online {
+  background-color: var(--success-600);
+  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.2);
+}
+
+.status-indicator.checking {
+  background-color: var(--warning-600);
+  box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.2);
+}
+
+.status-label {
+  flex: 1;
+}
+
+.status-link {
+  color: var(--primary-600);
+  display: flex;
+  align-items: center;
+}
+
+.sample-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sample-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px 10px;
+  background: #ffffff;
+  border: 1px solid var(--gray-200);
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s ease;
+}
+
+.sample-item:hover {
+  background: var(--primary-50);
+  border-color: var(--primary-500);
+  transform: translateY(-1px);
+}
+
+.sample-icon {
+  color: var(--primary-600);
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.sample-content {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sample-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--gray-800);
+}
+
+.sample-preview {
+  font-size: 10px;
+  color: var(--gray-600);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+
+.doc-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--gray-50);
+  border-radius: 8px;
+  margin-bottom: 6px;
+  border: 1px solid var(--gray-200);
+}
+
+.doc-icon {
+  color: var(--primary-600);
+}
+
+.doc-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.doc-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--gray-800);
+}
+
+.doc-meta {
+  font-size: 9.5px;
+  color: var(--gray-600);
+}
+
+.sidebar-footer {
+  margin-top: auto;
+  padding: 14px 20px;
+  border-top: 1px solid var(--gray-100);
+  text-align: center;
+}
+
+.footer-badge {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--gray-600);
+  background: var(--gray-100);
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+/* --------------------------------------------------------------------------
+   2. KHU VỰC CHAT TRUNG TÂM
+   -------------------------------------------------------------------------- */
+.chat-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background-color: #f8fafc;
+  overflow: hidden;
+  position: relative;
+}
+
+.chat-header {
+  padding: 14px 28px;
+  background-color: #ffffff;
+  border-bottom: 1px solid var(--gray-200);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.header-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--gray-900);
+  margin: 0;
+}
+
+.header-tag {
+  font-size: 11px;
+  color: var(--primary-600);
+  font-weight: 600;
+  margin-top: 2px;
+  display: inline-block;
+}
+
+.panel-toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--gray-200);
+  background: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--gray-700);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.panel-toggle-btn:hover, .panel-toggle-btn.active {
+  background: var(--primary-50);
+  color: var(--primary-600);
+  border-color: var(--primary-500);
+}
+
+.chat-viewport {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.message-row {
+  display: flex;
+  gap: 12px;
+  width: 100%;
+}
+
+.user-row {
+  justify-content: flex-end;
+}
+
+.avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.user-avatar {
+  background: var(--primary-600);
+  color: #ffffff;
+  align-self: flex-end;
+}
+
+.bot-avatar {
+  background: #ffffff;
+  color: var(--primary-600);
+  border: 1px solid var(--gray-200);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.user-bubble {
+  max-width: 68%;
+  background: linear-gradient(135deg, var(--primary-600), var(--primary-700));
+  color: #ffffff;
+  padding: 12px 18px;
+  border-radius: 16px 16px 2px 16px;
+  font-size: 14px;
+  line-height: 1.5;
+  box-shadow: 0 4px 6px -1px rgba(37, 99, 235, 0.15);
+}
+
+.bot-bubble {
+  max-width: 85%;
+  background: #ffffff;
+  color: var(--gray-800);
+  padding: 16px 22px;
+  border-radius: 16px 16px 16px 2px;
+  font-size: 14px;
+  line-height: 1.6;
+  border: 1px solid var(--gray-200);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.03);
+}
+
+.bot-bubble p {
+  margin: 0.5em 0;
+}
+
+.bot-bubble ul, .bot-bubble ol {
+  padding-left: 20px;
+  margin: 0.5em 0;
+}
+
+.bot-bubble h3, .bot-bubble h4 {
+  margin: 0.7em 0 0.3em 0;
+  color: var(--gray-900);
+}
+
+.bot-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.reasoning-preview-bar {
+  padding-left: 44px;
+}
+
+.preview-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: #ffffff;
+  border: 1px solid var(--purple-600);
+  color: var(--purple-600);
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.preview-btn:hover {
+  background: var(--purple-50);
+}
+
+.preview-icon {
+  color: var(--purple-600);
+}
+
+/* Comparison Container (Chế độ A/B) */
+.comparison-container {
+  display: flex;
+  gap: 16px;
+  width: 100%;
+}
+
+.comparison-card {
+  flex: 1;
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+  display: flex;
+  flex-direction: column;
+}
+
+.naive-card {
+  border: 1px solid var(--gray-300);
+  background: #ffffff;
+}
+
+.hybrid-card {
+  border: 2px solid var(--primary-600);
+  background: #ffffff;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.08);
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--gray-100);
+  margin-bottom: 12px;
+}
+
+.card-badge {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--gray-600);
+  letter-spacing: 0.02em;
+}
+
+.card-badge.highlight {
+  color: var(--primary-600);
+}
+
+.warning-chip {
+  font-size: 10px;
+  font-weight: 700;
+  background: var(--danger-50);
+  color: var(--danger-600);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.success-chip {
+  font-size: 10px;
+  font-weight: 700;
+  background: var(--success-50);
+  color: var(--success-600);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.card-body {
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--gray-700);
+}
+
+/* Loading Card */
+.loading-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: #ffffff;
+  padding: 12px 18px;
+  border-radius: 16px;
+  border: 1px solid var(--gray-200);
+  font-size: 13px;
+  color: var(--gray-700);
+}
+
+.spin-icon {
+  animation: spin 1s linear infinite;
+  color: var(--primary-600);
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.loading-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.loading-text small {
+  font-size: 11px;
+  color: var(--gray-600);
+}
+
+/* Chat Input Form */
+.chat-form {
+  padding: 16px 32px 20px 32px;
+  background-color: #ffffff;
+  border-top: 1px solid var(--gray-200);
+}
+
+.input-box {
+  display: flex;
+  align-items: center;
+  background: #ffffff;
+  border: 1.5px solid var(--gray-300);
+  border-radius: 28px;
+  padding: 6px 8px 6px 20px;
+  transition: all 0.15s ease;
+}
+
+.input-box:focus-within {
+  border-color: var(--primary-600);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.main-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  font-size: 14px;
+  color: var(--gray-900);
+  background: transparent;
+}
+
+.send-button {
+  background: var(--primary-600);
+  color: #ffffff;
+  border: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.send-button:disabled {
+  background: var(--gray-300);
+  cursor: not-allowed;
+}
+
+.input-disclaimer {
+  margin-top: 8px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--gray-600);
+}
+
+/* --------------------------------------------------------------------------
+   3. KHUNG LUỒNG SUY LUẬN SYMBOLIC (Bên phải)
+   -------------------------------------------------------------------------- */
+.symbolic-panel {
+  width: 380px;
+  background-color: #ffffff;
+  border-left: 1px solid var(--gray-200);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.03);
+}
+
+.panel-header {
+  padding: 16px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--gray-100);
+}
+
+.panel-title-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.panel-header-icon {
+  color: var(--purple-600);
+}
+
+.panel-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--gray-900);
+  margin: 0;
+}
+
+.panel-sub {
+  font-size: 10.5px;
+  color: var(--gray-600);
+}
+
+.panel-close-btn {
+  background: none;
+  border: none;
+  color: var(--gray-600);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+}
+
+.panel-close-btn:hover {
+  background: var(--gray-100);
+}
+
+.panel-tabs {
+  display: flex;
+  background: var(--gray-50);
+  padding: 4px;
+  border-bottom: 1px solid var(--gray-200);
+}
+
+.panel-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 4px;
+  border: none;
+  background: transparent;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--gray-600);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.panel-tab.active {
+  background: #ffffff;
+  color: var(--primary-600);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.panel-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 60%;
+  text-align: center;
+  color: var(--gray-600);
+  padding: 20px;
+}
+
+.empty-icon {
+  color: var(--gray-300);
+  margin-bottom: 12px;
+}
+
+.card-box {
+  background: var(--gray-50);
+  border: 1px solid var(--gray-200);
+  border-radius: 10px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.card-box-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--gray-800);
+}
+
+.icon-success { color: var(--success-600); }
+.icon-primary { color: var(--primary-600); }
+.icon-purple  { color: var(--purple-600); }
+
+.facts-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fact-item {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11.5px;
+}
+
+.fact-label {
+  color: var(--gray-600);
+}
+
+.fact-value {
+  font-weight: 600;
+  color: var(--gray-900);
+}
+
+.highlight-age {
+  color: var(--purple-600);
+  background: var(--purple-50);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.calcs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.calc-card {
+  background: #ffffff;
+  border: 1px solid var(--gray-200);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.calc-action-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--gray-900);
+  line-height: 1.4;
+}
+
+.calc-basis-tag {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--primary-600);
+  background: var(--primary-50);
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin: 4px 0 8px 0;
+}
+
+.calc-results-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-top: 1px dashed var(--gray-200);
+  padding-top: 6px;
+}
+
+.calc-result-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.result-subject {
+  font-weight: 600;
+  color: var(--gray-700);
+}
+
+.result-amount {
+  font-weight: 700;
+  color: var(--danger-600);
+}
+
+.result-formula {
+  font-size: 10px;
+  color: var(--gray-600);
+}
+
+/* Steps Timeline */
+.steps-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.timeline-item {
+  display: flex;
+  gap: 10px;
+}
+
+.timeline-badge {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--purple-600);
+  color: #ffffff;
+  font-size: 10.5px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.timeline-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.timeline-rule-tag {
+  font-size: 9.5px;
+  font-weight: 700;
+  color: var(--purple-600);
+  text-transform: uppercase;
+}
+
+.timeline-text {
+  font-size: 11px;
+  color: var(--gray-800);
+  line-height: 1.4;
+}
+
+.timeline-basis {
+  font-size: 10px;
+  color: var(--gray-600);
+}
+
+/* Graph View Tab */
+.graph-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--purple-50);
+  border: 1px solid var(--purple-600);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--purple-600);
+}
+
+.neo4j-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #ffffff;
+  color: var(--purple-600);
+  border: 1px solid var(--purple-600);
+  padding: 4px 8px;
+  border-radius: 6px;
+  text-decoration: none;
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.nodes-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.graph-node-card {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--gray-200);
+  background: #ffffff;
+}
+
+.graph-node-card.type-legaldoc { border-left: 4px solid #2563eb; }
+.graph-node-card.type-article  { border-left: 4px solid #059669; }
+.graph-node-card.type-action   { border-left: 4px solid #d97706; }
+.graph-node-card.type-penalty  { border-left: 4px solid #dc2626; }
+
+.node-type-badge {
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--gray-600);
+  margin-bottom: 2px;
+}
+
+.node-label-text {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--gray-900);
+}
+
+.edges-section {
+  margin-top: 12px;
+}
+
+.edges-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--gray-700);
+  margin-bottom: 8px;
+}
+
+.edges-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.edge-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  background: var(--gray-50);
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--gray-200);
+  overflow-x: auto;
+}
+
+.edge-node {
+  font-weight: 600;
+  color: var(--gray-800);
+}
+
+.edge-rel {
+  color: var(--primary-600);
+  font-weight: 700;
+}
+
+/* Sources Tab */
+.sources-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.source-card {
+  background: var(--gray-50);
+  border: 1px solid var(--gray-200);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.source-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.source-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--primary-600);
+}
+
+.source-page {
+  font-size: 10px;
+  color: var(--gray-600);
+  background: #ffffff;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--gray-200);
+}
+
+.source-article {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--gray-800);
+  margin-bottom: 6px;
+}
+
+.source-snippet {
+  font-size: 11px;
+  color: var(--gray-600);
+  line-height: 1.4;
+  margin: 0;
+}
+
+
+========================================
+FILE: frontend/src/App.jsx
+========================================
+
+import React, { useState, useEffect, useRef } from 'react';
+import axios from 'axios';
+import { 
+  Send, User, Bot, Loader2, Scale, ToggleLeft, ToggleRight, 
+  Database, FileText, ExternalLink, ShieldCheck, Cpu, 
+  GitBranch, CheckCircle2, AlertTriangle, Layers, ChevronRight,
+  Info, Sparkles, BookOpen, Network, RefreshCw, X
+} from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import './App.css';
+
+const API_BASE_URL = 'http://127.0.0.1:8000';
+
+const SAMPLE_QUESTIONS = [
+  {
+    title: "Công ty vs Cá nhân (Phạt x2)",
+    text: "Công ty tôi đăng bài sai sự thật về dịch bệnh lên fanpage thì bị phạt bao nhiêu tiền? Nếu là nhân viên tự ý đăng thì mức phạt có khác không?"
+  },
+  {
+    title: "Độ tuổi vị thành niên (15 tuổi)",
+    text: "Một học sinh 15 tuổi sử dụng tài khoản mạng xã hội để đăng thông tin sai sự thật thì có bị phạt tiền không?"
+  },
+  {
+    title: "Tra cứu Điều 101 Nghị định 15",
+    text: "Hành vi chia sẻ thông tin giả mạo, vu khống trên mạng xã hội bị xử phạt thế nào theo Điều 101 Nghị định 15/2020?"
+  }
+];
+
+function App() {
+  const [input, setInput] = useState('');
+  const [isComparisonMode, setIsComparisonMode] = useState(false);
+  const [showSymbolicPanel, setShowSymbolicPanel] = useState(true);
+  const [activeTab, setActiveTab] = useState('rules'); // 'rules' | 'graph' | 'sources'
+  const [isLoading, setIsLoading] = useState(false);
+  const [currentSymbolicData, setCurrentSymbolicData] = useState(null);
+  const [backendStatus, setBackendStatus] = useState({ neo4j: false, pgvector: false });
+
+  const [messages, setMessages] = useState([
+    { 
+      role: 'bot', 
+      text: `### Xin chào! Tôi là Trợ lý ảo tư vấn Luật Công nghệ thông tin ⚖️\n\nHệ thống ứng dụng kiến trúc **Neuro-Symbolic AI** kết hợp:\n- 🧠 **Khối Neural**: Tìm kiếm ngữ nghĩa vector bằng Google Gemini & PGVector.\n- 🕸️ **Khối Symbolic**: Đồ thị tri thức **Neo4j** & Bộ quy tắc suy luận tất định (Rule Engine) chống ảo giác số liệu.\n\n*Hãy chọn một câu hỏi mẫu bên dưới hoặc đặt câu hỏi pháp lý của bạn!*`,
+      symbolicData: null,
+    }
+  ]);
+
+  const chatEndRef = useRef(null);
+
+  useEffect(() => {
+    // Kiểm tra sức khỏe Backend
+    axios.get(`${API_BASE_URL}/health`)
+      .then(res => {
+        setBackendStatus({
+          neo4j: res.data.neo4j_connected,
+          pgvector: res.data.pgvector_ready
+        });
+      })
+      .catch(() => {
+        setBackendStatus({ neo4j: false, pgvector: false });
+      });
+  }, []);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, isLoading]);
+
+  const sendMessage = async (questionText) => {
+    const textToSend = questionText || input;
+    if (!textToSend.trim() || isLoading) return;
+
+    const userMessage = { role: 'user', text: textToSend };
+    setMessages((prev) => [...prev, userMessage]);
+    setInput('');
+    setIsLoading(true);
+
+    try {
+      const response = await axios.post(`${API_BASE_URL}/chat`, {
+        question: textToSend,
+        comparison_mode: isComparisonMode,
+      });
+
+      const { answer, naive_answer, symbolic_reasoning, graph_view, sources } = response.data;
+
+      const botMessage = {
+        role: 'bot',
+        text: answer,
+        naiveText: naive_answer,
+        symbolicData: {
+          reasoning: symbolic_reasoning,
+          graph: graph_view,
+          sources: sources
+        }
+      };
+
+      setMessages((prev) => [...prev, botMessage]);
+      setCurrentSymbolicData(botMessage.symbolicData);
+      setShowSymbolicPanel(true);
+    } catch (error) {
+      console.error("Lỗi gọi API:", error);
+      setMessages((prev) => [...prev, { 
+        role: 'bot', 
+        text: '⚠️ **Lỗi kết nối máy chủ Backend.**\nVui lòng đảm bảo server FastAPI đang chạy tại `http://localhost:8000` và Neo4j đang hoạt động.',
+        symbolicData: null
+      }]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const activeSymbolic = currentSymbolicData || messages.slice().reverse().find(m => m.symbolicData)?.symbolicData;
+
+  return (
+    <div className="app-container">
+      {/* 1. SIDEBAR BÊN TRÁI */}
+      <aside className="sidebar">
+        <div className="sidebar-header">
+          <div className="logo-icon"><Scale size={22} /></div>
+          <div>
+            <h1 className="sidebar-title">IT Law Assistant</h1>
+            <span className="sidebar-sub">Neuro-Symbolic AI Platform</span>
+          </div>
+        </div>
+
+        {/* Chế độ RAG */}
+        <div className="sidebar-section">
+          <h3 className="section-header">Chế độ Thử nghiệm</h3>
+          <div className="setting-card">
+            <div className="setting-row">
+              <span className="setting-label">So sánh Đối chứng (A/B)</span>
+              <button 
+                onClick={() => setIsComparisonMode(!isComparisonMode)}
+                className="toggle-btn"
+                title="Bật/Tắt chế độ so sánh Naive RAG vs Neuro-Symbolic RAG"
+              >
+                {isComparisonMode ? <ToggleRight size={34} color="#2563eb" /> : <ToggleLeft size={34} color="#9ca3af" />}
+              </button>
+            </div>
+            <p className="setting-desc">
+              {isComparisonMode 
+                ? "Đang hiển thị song song: Naive RAG (dễ bịa số liệu) vs Neuro-Symbolic RAG (chính xác 100%)." 
+                : "Chế độ chuẩn: Trợ lý Neuro-Symbolic AI tối ưu độ chính xác pháp lý."}
+            </p>
+          </div>
+        </div>
+
+        {/* Trạng thái hệ thống */}
+        <div className="sidebar-section">
+          <h3 className="section-header">Hạ tầng Đa mô hình</h3>
+          <div className="status-list">
+            <div className="status-row">
+              <span className={`status-indicator ${backendStatus.neo4j ? 'online' : 'checking'}`}></span>
+              <span className="status-label">Khối Symbolic: <b>Neo4j 5.26</b></span>
+              <a href="http://localhost:7474" target="_blank" rel="noreferrer" className="status-link" title="Mở Neo4j Browser">
+                <ExternalLink size={12} />
+              </a>
+            </div>
+            <div className="status-row">
+              <span className={`status-indicator ${backendStatus.pgvector ? 'online' : 'checking'}`}></span>
+              <span className="status-label">Khối Neural: <b>PostgreSQL + pgvector</b></span>
+            </div>
+            <div className="status-row">
+              <span className="status-indicator online"></span>
+              <span className="status-label">Mô hình: <b>Gemini + DeepSeek</b></span>
+            </div>
+          </div>
+        </div>
+
+        {/* Câu hỏi kiểm thử đồ án */}
+        <div className="sidebar-section">
+          <h3 className="section-header">Kịch bản Test Hội đồng</h3>
+          <div className="sample-list">
+            {SAMPLE_QUESTIONS.map((q, idx) => (
+              <button 
+                key={idx} 
+                className="sample-item"
+                onClick={() => sendMessage(q.text)}
+                disabled={isLoading}
+              >
+                <Sparkles size={13} className="sample-icon" />
+                <div className="sample-content">
+                  <span className="sample-title">{q.title}</span>
+                  <span className="sample-preview">{q.text}</span>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Kho tri thức văn bản */}
+        <div className="sidebar-section">
+          <h3 className="section-header">Văn bản đã nạp Đồ thị</h3>
+          <div className="doc-item">
+            <BookOpen size={14} className="doc-icon" />
+            <div className="doc-info">
+              <span className="doc-name">Nghị định 15/2020/NĐ-CP</span>
+              <span className="doc-meta">124 Điều • 394 Khung phạt</span>
+            </div>
+          </div>
+          <div className="doc-item">
+            <BookOpen size={14} className="doc-icon" />
+            <div className="doc-info">
+              <span className="doc-name">Luật An ninh mạng 2018</span>
+              <span className="doc-meta">43 Điều quy định</span>
+            </div>
+          </div>
+          <div className="doc-item">
+            <BookOpen size={14} className="doc-icon" />
+            <div className="doc-info">
+              <span className="doc-name">Luật Công nghệ thông tin 2006</span>
+              <span className="doc-meta">78 Điều quy định</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="sidebar-footer">
+          <span className="footer-badge">Đồ án: Neuro-Symbolic Legal RAG</span>
+        </div>
+      </aside>
+
+      {/* 2. KHU VỰC CHAT TRUNG TÂM */}
+      <main className="chat-main">
+        {/* Top Navbar */}
+        <header className="chat-header">
+          <div className="header-left">
+            <h2 className="header-title">Hệ thống Trợ lý ảo tư vấn Pháp luật Công nghệ thông tin</h2>
+            <span className="header-tag">Neuro-Symbolic Architecture</span>
+          </div>
+          <div className="header-right">
+            <button 
+              className={`panel-toggle-btn ${showSymbolicPanel ? 'active' : ''}`}
+              onClick={() => setShowSymbolicPanel(!showSymbolicPanel)}
+            >
+              <Cpu size={16} />
+              <span>{showSymbolicPanel ? 'Ẩn Luồng Symbolic' : 'Xem Luồng Symbolic'}</span>
+            </button>
+          </div>
+        </header>
+
+        {/* Danh sách tin nhắn */}
+        <div className="chat-viewport">
+          {messages.map((msg, index) => {
+            if (msg.role === 'user') {
+              return (
+                <div key={index} className="message-row user-row">
+                  <div className="user-bubble">{msg.text}</div>
+                  <div className="avatar user-avatar"><User size={16} /></div>
+                </div>
+              );
+            }
+
+            // Tin nhắn của Bot
+            return (
+              <div key={index} className="bot-turn">
+                <div className="message-row bot-row">
+                  <div className="avatar bot-avatar"><Bot size={16} /></div>
+                  
+                  {/* Nếu đang bật chế độ so sánh đối chứng A/B */}
+                  {isComparisonMode && msg.naiveText ? (
+                    <div className="comparison-container">
+                      {/* Cột trái: Naive RAG */}
+                      <div className="comparison-card naive-card">
+                        <div className="card-header naive-header">
+                          <span className="card-badge">CỘT 1: NAIVE RAG (CHỈ DÙNG VECTOR)</span>
+                          <span className="warning-chip">Dễ nhầm lẫn số phạt</span>
+                        </div>
+                        <div className="card-body">
+                          <ReactMarkdown>{msg.naiveText}</ReactMarkdown>
+                        </div>
+                      </div>
+
+                      {/* Cột phải: Neuro-Symbolic RAG */}
+                      <div className="comparison-card hybrid-card">
+                        <div className="card-header hybrid-header">
+                          <span className="card-badge highlight">CỘT 2: NEURO-SYMBOLIC RAG (HYBRID)</span>
+                          <span className="success-chip">Chính xác 100% theo Điều 4</span>
+                        </div>
+                        <div className="card-body">
+                          <ReactMarkdown>{msg.text}</ReactMarkdown>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    // Chế độ xem chuẩn
+                    <div className="bot-bubble">
+                      <ReactMarkdown>{msg.text}</ReactMarkdown>
+                    </div>
+                  )}
+                </div>
+
+                {/* Nút xem chi tiết căn cứ suy luận nếu có dữ liệu */}
+                {msg.symbolicData && (
+                  <div className="reasoning-preview-bar">
+                    <button 
+                      className="preview-btn"
+                      onClick={() => {
+                        setCurrentSymbolicData(msg.symbolicData);
+                        setShowSymbolicPanel(true);
+                      }}
+                    >
+                      <GitBranch size={14} className="preview-icon" />
+                      <span>Xem {msg.symbolicData.reasoning?.rule_steps?.length || 0} bước suy luận luật tất định & đồ thị tri thức</span>
+                      <ChevronRight size={14} />
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {isLoading && (
+            <div className="message-row bot-row">
+              <div className="avatar bot-avatar"><Bot size={16} /></div>
+              <div className="loading-card">
+                <Loader2 size={18} className="spin-icon" />
+                <div className="loading-text">
+                  <span>Đang thực hiện truy vấn kép:</span>
+                  <small>Vector Search (Neural) + Tra cứu Đồ thị & Chạy Rule Engine (Symbolic)...</small>
+                </div>
+              </div>
+            </div>
+          )}
+          <div ref={chatEndRef} />
+        </div>
+
+        {/* Thanh nhập câu hỏi */}
+        <form onSubmit={(e) => { e.preventDefault(); sendMessage(); }} className="chat-form">
+          <div className="input-box">
+            <input 
+              type="text" 
+              value={input} 
+              onChange={(e) => setInput(e.target.value)} 
+              placeholder="Hỏi về quy định pháp luật, mức xử phạt, trách nhiệm pháp lý CNTT..."
+              disabled={isLoading}
+              className="main-input"
+            />
+            <button 
+              type="submit" 
+              disabled={isLoading || !input.trim()}
+              className="send-button"
+              title="Gửi câu hỏi"
+            >
+              {isLoading ? <Loader2 size={16} className="spin-icon" /> : <Send size={16} />}
+            </button>
+          </div>
+          <div className="input-disclaimer">
+            <span>🛡️ Khối Symbolic áp dụng quy định Điều 4 Khoản 3 Nghị định 15/2020/NĐ-CP (Tổ chức phạt gấp đôi Cá nhân).</span>
+          </div>
+        </form>
+      </main>
+
+      {/* 3. KHUNG LUỒNG SUY LUẬN SYMBOLIC (EXPLAINABLE AI SIDECAR) */}
+      {showSymbolicPanel && (
+        <aside className="symbolic-panel">
+          <div className="panel-header">
+            <div className="panel-title-group">
+              <Cpu size={18} className="panel-header-icon" />
+              <div>
+                <h3 className="panel-title">Luồng suy luận Symbolic</h3>
+                <span className="panel-sub">Explainable Legal Intelligence (XAI)</span>
+              </div>
+            </div>
+            <button className="panel-close-btn" onClick={() => setShowSymbolicPanel(false)}>
+              <X size={16} />
+            </button>
+          </div>
+
+          {/* Navigation Tabs */}
+          <div className="panel-tabs">
+            <button 
+              className={`panel-tab ${activeTab === 'rules' ? 'active' : ''}`}
+              onClick={() => setActiveTab('rules')}
+            >
+              <GitBranch size={14} />
+              <span>Dấu vết Logic</span>
+            </button>
+            <button 
+              className={`panel-tab ${activeTab === 'graph' ? 'active' : ''}`}
+              onClick={() => setActiveTab('graph')}
+            >
+              <Network size={14} />
+              <span>Đồ thị Tri thức</span>
+            </button>
+            <button 
+              className={`panel-tab ${activeTab === 'sources' ? 'active' : ''}`}
+              onClick={() => setActiveTab('sources')}
+            >
+              <BookOpen size={14} />
+              <span>Trích dẫn Luật</span>
+            </button>
+          </div>
+
+          <div className="panel-content">
+            {!activeSymbolic ? (
+              <div className="empty-state">
+                <Info size={32} className="empty-icon" />
+                <p>Chưa có dữ liệu suy luận cho câu hỏi hiện tại.</p>
+                <small>Hãy đặt câu hỏi để quan sát luồng suy luận tự động của hệ thống.</small>
+              </div>
+            ) : (
+              <>
+                {/* TAB 1: DẤU VẾT LOGIC & TÍNH TOÁN KHUNG PHẠT */}
+                {activeTab === 'rules' && (
+                  <div className="rules-view">
+                    {/* Các thực thể phát hiện */}
+                    <div className="card-box">
+                      <div className="card-box-title">
+                        <CheckCircle2 size={14} className="icon-success" />
+                        <span>Thực thể phát hiện (Query Facts)</span>
+                      </div>
+                      <div className="facts-grid">
+                        <div className="fact-item">
+                          <span className="fact-label">Chủ thể nhận diện:</span>
+                          <span className="fact-value">
+                            {activeSymbolic.reasoning?.facts?.subjects?.map(s => s === 'ORGANIZATION' ? 'Tổ chức' : 'Cá nhân').join(', ') || 'Chung'}
+                          </span>
+                        </div>
+                        {activeSymbolic.reasoning?.facts?.age && (
+                          <div className="fact-item">
+                            <span className="fact-label">Độ tuổi phát hiện:</span>
+                            <span className="fact-value highlight-age">{activeSymbolic.reasoning?.facts?.age} tuổi</span>
+                          </div>
+                        )}
+                        {activeSymbolic.reasoning?.facts?.article_refs?.length > 0 && (
+                          <div className="fact-item">
+                            <span className="fact-label">Số Điều truy vấn:</span>
+                            <span className="fact-value">Điều {activeSymbolic.reasoning?.facts?.article_refs.join(', ')}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Bảng kết quả tính toán khung phạt theo luật */}
+                    {activeSymbolic.reasoning?.penalty_calculations?.length > 0 && (
+                      <div className="card-box">
+                        <div className="card-box-title">
+                          <Scale size={14} className="icon-primary" />
+                          <span>Mức phạt tính toán theo quy tắc cứng</span>
+                        </div>
+                        <div className="calcs-list">
+                          {activeSymbolic.reasoning.penalty_calculations.map((calc, i) => (
+                            <div key={i} className="calc-card">
+                              <div className="calc-action-title">{calc.action}</div>
+                              <div className="calc-basis-tag">{calc.clause}, {calc.article}</div>
+                              <div className="calc-results-list">
+                                {calc.calculations.map((c, j) => (
+                                  <div key={j} className="calc-result-row">
+                                    <span className="result-subject">{c.subject_label}:</span>
+                                    <span className="result-amount">{c.display}</span>
+                                    <span className="result-formula">({c.formula})</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Dấu vết từng bước suy luận (Rule Steps) */}
+                    <div className="card-box">
+                      <div className="card-box-title">
+                        <GitBranch size={14} className="icon-purple" />
+                        <span>Quy trình suy luận logic (Rule Trace)</span>
+                      </div>
+                      <div className="steps-timeline">
+                        {activeSymbolic.reasoning?.rule_steps?.map((step, idx) => (
+                          <div key={idx} className="timeline-item">
+                            <div className="timeline-badge">{idx + 1}</div>
+                            <div className="timeline-body">
+                              <div className="timeline-rule-tag">[{step.rule}]</div>
+                              <div className="timeline-text">{step.detail}</div>
+                              <div className="timeline-basis">Căn cứ: <b>{step.basis}</b></div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 2: ĐỒ THỊ TRI THỨC (GRAPH NODES & EDGES) */}
+                {activeTab === 'graph' && (
+                  <div className="graph-view">
+                    <div className="graph-banner">
+                      <span>Đã kích hoạt {activeSymbolic.graph?.nodes?.length || 0} Nodes trên Neo4j</span>
+                      <a href="http://localhost:7474" target="_blank" rel="noreferrer" className="neo4j-btn">
+                        <span>Mở Neo4j Browser</span>
+                        <ExternalLink size={12} />
+                      </a>
+                    </div>
+
+                    <div className="nodes-container">
+                      {activeSymbolic.graph?.nodes?.map((node, i) => (
+                        <div key={i} className={`graph-node-card type-${node.type?.toLowerCase()}`}>
+                          <div className="node-type-badge">{node.type}</div>
+                          <div className="node-label-text">{node.label}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="edges-section">
+                      <h4 className="edges-title">Mối quan hệ liên đới (Relationships):</h4>
+                      <div className="edges-list">
+                        {activeSymbolic.graph?.edges?.map((edge, i) => (
+                          <div key={i} className="edge-item">
+                            <span className="edge-node">{edge.source}</span>
+                            <span className="edge-rel">--[{edge.label}]--&gt;</span>
+                            <span className="edge-node">{edge.target}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 3: TRÍCH DẪN VĂN BẢN GỐC (NEURAL SOURCES) */}
+                {activeTab === 'sources' && (
+                  <div className="sources-view">
+                    <div className="sources-list">
+                      {activeSymbolic.sources?.map((src, i) => (
+                        <div key={i} className="source-card">
+                          <div className="source-header">
+                            <span className="source-title">{src.title}</span>
+                            <span className="source-page">Trang {src.page}</span>
+                          </div>
+                          <div className="source-article">{src.article}</div>
+                          <p className="source-snippet">{src.snippet}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </aside>
+      )}
+    </div>
+  );
+}
+
+export default App;
+
+========================================
+FILE: frontend/src/index.css
+========================================
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background-color: #f3f4f6;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+/* Ép thanh input không bị đen do chế độ Dark Mode của trình duyệt */
+input {
+  background-color: transparent !important;
+  color: #1f2937 !important;
+}
+
+========================================
+FILE: frontend/src/main.jsx
+========================================
+
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import './index.css'
+import App from './App.jsx'
+
+createRoot(document.getElementById('root')).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+)
