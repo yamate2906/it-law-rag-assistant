@@ -135,7 +135,7 @@ def build_structured_chunks(
 def sync_existing_pgvector_metadata() -> int:
     """Đồng bộ và chuẩn hóa metadata (doc_code, doc_title, article_id, article_number, article_title)
     cho các bản ghi đã nhúng trong bảng langchain_pg_embedding để kích hoạt cầu nối Neural -> Symbolic."""
-    docs = load_corpus(PROJECT_DIR / "data", core_only=True)
+    docs = load_corpus(PROJECT_DIR / "data", core_only=False)
     by_code = {d.code: d for d in docs}
 
     dsn = CONNECTION_STRING.replace("postgresql+psycopg2://", "postgresql://")
@@ -409,23 +409,27 @@ def embed_and_commit_document(
                 if not rate_limited or attempt == 7:
                     raise
                 # Thử nạp lại .env phòng trường hợp người dùng vừa đổi GEMINI_API_KEY khi script đang chạy
-                old_key = getattr(embeddings, "google_api_key", None)
+                old_raw = getattr(embeddings, "google_api_key", None)
+                old_key_val = (
+                    old_raw.get_secret_value()
+                    if hasattr(old_raw, "get_secret_value")
+                    else str(old_raw or "")
+                ).strip()
                 load_dotenv(BACKEND_DIR / ".env", override=True)
-                new_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-                if new_key and str(old_key) != str(new_key):
+                new_key = (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "").strip()
+                if new_key and old_key_val != new_key:
                     print("   🔄 Phát hiện GEMINI_API_KEY mới trong .env -> Chuyển sang key mới ngay lập tức!")
                     get_embeddings.cache_clear()
                     embeddings = get_embeddings()
                     _usage_window.clear()
                     continue
-                # Chỉ dừng hẳn khi hết hạn mức THEO NGÀY; giới hạn theo phút thì chờ rồi thử lại.
-                # Google đôi khi không ghi rõ "PerDay": nếu đã chờ >1 phút mà vẫn 429 liên tiếp 3 lần
-                # thì chắc chắn là hết hạn mức theo ngày -> dừng êm, không in traceback.
+                # Chỉ dừng hẳn khi hết hạn mức THEO NGÀY hoặc đã thử lại 6 lần liên tiếp không qua được.
                 if (
                     "PERDAY" in message
                     or "PER_DAY" in message
+                    or "PER DAY" in message
                     or re.search(r"RETRY IN \d+H", message)
-                    or attempt >= 3
+                    or attempt >= 6
                 ):
                     raise SystemExit(
                         "\n⚠ Đã hết hạn mức embedding THEO NGÀY của project Google chứa API key này.\n"

@@ -98,6 +98,37 @@ BENCHMARK_CASES = [
         "fine_rule": "no_fabricated_fine",
         "subject_groups": [["không tồn tại", "không có thực"]],
     },
+    {
+        "id": "TC06",
+        "category": "Quy định chung - Hành vi nghiêm cấm (Điều 8 Luật An ninh mạng)",
+        "question": (
+            "Theo Điều 8 Luật An ninh mạng 2018, những hành vi nào bị nghiêm cấm trên không gian mạng?"
+        ),
+        "citation_groups": [["điều 8"], ["an ninh mạng", "24/2018"]],
+        "fine_rule": "no_fabricated_fine",
+        "subject_groups": [["nghiêm cấm", "xuyên tạc", "thông tin sai sự thật"]],
+    },
+    {
+        "id": "TC07",
+        "category": "Bảo vệ dữ liệu cá nhân (NĐ 13/2023 & Luật 91/2025)",
+        "question": (
+            "Theo Nghị định 13/2023/NĐ-CP và Luật Bảo vệ dữ liệu cá nhân, quyền của chủ thể dữ liệu "
+            "và nghĩa vụ khi xử lý dữ liệu cá nhân nhạy cảm là gì?"
+        ),
+        "citation_groups": [["13/2023", "dữ liệu cá nhân"]],
+        "fine_rule": "no_fabricated_fine",
+        "subject_groups": [["chủ thể dữ liệu", "đồng ý", "dữ liệu cá nhân"]],
+    },
+    {
+        "id": "TC08",
+        "category": "Chặn văn bản ngoài phạm vi CNTT (Out-of-Scope Guardrail)",
+        "question": (
+            "Theo Nghị định 100/2019/NĐ-CP thì vượt đèn đỏ bị phạt bao nhiêu tiền?"
+        ),
+        "citation_groups": [["100/2019"], ["ngoài phạm vi", "không nằm trong cơ sở dữ liệu"]],
+        "fine_rule": "no_fabricated_fine",
+        "subject_groups": [["ngoài phạm vi", "không nằm trong cơ sở dữ liệu", "công nghệ thông tin"]],
+    },
 ]
 
 
@@ -336,6 +367,42 @@ async def run_benchmark():
         )
     print(f"Số ca đánh giá: {len(rows)}")
     print("=" * 92)
+
+    # Tự động xuất bảng báo cáo Markdown chuẩn học thuật ra file BENCHMARK_REPORT.md
+    from pathlib import Path
+
+    report_path = Path(__file__).resolve().parent.parent / "BENCHMARK_REPORT.md"
+    md_lines = [
+        "# BÁO CÁO THỰC NGHIỆM ĐỐI CHỨNG: NAIVE VECTOR RAG vs. NEURO-SYMBOLIC HYBRID RAG",
+        "",
+        "## 1. Bảng Kết quả Chi tiết theo Kịch bản Kiểm thử",
+        "",
+        "| Mã Ca | Phân loại Kịch bản | Trích dẫn (Naive / Hybrid) | Mức phạt & Độ tuổi (Naive / Hybrid) | Chủ thể & Guardrail (Naive / Hybrid) | Thời gian (s) |",
+        "| :--- | :--- | :---: | :---: | :---: | :---: |",
+    ]
+    for r in rows:
+        c_str = f"{'✅' if r['n_citation'] else '❌'} / **{'✅' if r['h_citation'] else '❌'}**"
+        f_str = f"{'✅' if r['n_fine_age'] else '❌'} / **{'✅' if r['h_fine_age'] else '❌'}**"
+        s_str = f"{'✅' if r['n_subject_guardrail'] else '❌'} / **{'✅' if r['h_subject_guardrail'] else '❌'}**"
+        md_lines.append(
+            f"| **{r['id']}** | {r['category']} | {c_str} | {f_str} | {s_str} | {r['elapsed_seconds']:.2f}s |"
+        )
+
+    md_lines.extend([
+        "",
+        "## 2. Tổng hợp Độ chính xác Định lượng",
+        "",
+        "| Tiêu chí Đánh giá | Naive Vector RAG | Neuro-Symbolic Hybrid RAG | Độ cải thiện |",
+        "| :--- | :---: | :---: | :---: |",
+    ])
+    for label, key in metrics:
+        n_val = _rate(rows, f"n_{key}")
+        h_val = _rate(rows, f"h_{key}")
+        diff = h_val - n_val
+        md_lines.append(f"| **{label}** | {n_val:.1f}% | **{h_val:.1f}%** | +{diff:.1f}% |")
+
+    report_path.write_text("\n".join(md_lines) + "\n", encoding="utf-8")
+    print(f"\n📄 Đã xuất bảng báo cáo Markdown học thuật tại: {report_path}")
 
 
 if __name__ == "__main__":

@@ -815,6 +815,28 @@ function KnowledgeGraph3D({
 }
 
 // ============================================================================
+// Hàm sao chép an toàn (hỗ trợ cả localhost HTTPS và mạng LAN HTTP)
+function safeCopyToClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).catch(() => {});
+    return;
+  }
+  try {
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    textArea.style.position = 'fixed';
+    textArea.style.left = '-9999px';
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textArea);
+  } catch {
+    // ignore
+  }
+}
+
+// ============================================================================
 // MODAL HƯỚNG DẪN KẾT NỐI PHẦN MỀM NEO4J DESKTOP / NEO4J BROWSER
 // ============================================================================
 function Neo4jConnectionModal({ isOpen, onClose, stats }) {
@@ -823,7 +845,7 @@ function Neo4jConnectionModal({ isOpen, onClose, stats }) {
   if (!isOpen) return null;
 
   const copyText = (key, value) => {
-    navigator.clipboard.writeText(value);
+    safeCopyToClipboard(value);
     setCopiedKey(key);
     setTimeout(() => setCopiedKey(''), 1800);
   };
@@ -846,7 +868,7 @@ RETURN d, a, k, act, p LIMIT 120;`;
               <h3>Kết nối Đồ thị với App Neo4j Desktop & Neo4j Browser</h3>
               <p>
                 Hiện có sẵn <b>{stats?.total_nodes?.toLocaleString() || '13.751'} đỉnh</b> và{' '}
-                <b>{stats?.total_relationships?.toLocaleString() || '16.078'} cạnh</b> trong Neo4j
+                <b>{(stats?.total_edges || stats?.total_relationships || 17959).toLocaleString()} cạnh</b> trong Neo4j
               </p>
             </div>
           </div>
@@ -1000,6 +1022,8 @@ function App() {
   const [backendStatus, setBackendStatus] = useState({ neo4j: false, pgvector: false });
 
   const chatEndRef = useRef(null);
+  const scrollViewportRef = useRef(null);
+  const isNearBottomRef = useRef(true);
   const textareaRef = useRef(null);
   const abortControllerRef = useRef(null);
 
@@ -1065,8 +1089,15 @@ function App() {
   }, [checkBackendHealth, fetchLiveNeo4jGraph]);
 
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (isNearBottomRef.current) {
+      chatEndRef.current?.scrollIntoView({ behavior: isLoading ? 'auto' : 'smooth' });
+    }
   }, [messages, isLoading]);
+
+  const handleViewportScroll = useCallback((e) => {
+    const el = e.currentTarget;
+    isNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+  }, []);
 
   // Tự động co giãn chiều cao ô nhập giống ChatGPT
   useEffect(() => {
@@ -1131,6 +1162,7 @@ function App() {
     abortControllerRef.current?.abort();
     const controller = new AbortController();
     abortControllerRef.current = controller;
+    isNearBottomRef.current = true;
     const targetConvId = activeConvId;
 
     const historyPayload = messages
@@ -1302,7 +1334,7 @@ function App() {
   };
 
   const copyMessage = (idx, text) => {
-    navigator.clipboard.writeText(text);
+    safeCopyToClipboard(text);
     setCopiedMsgIdx(idx);
     setTimeout(() => setCopiedMsgIdx(null), 1800);
   };
@@ -1524,7 +1556,11 @@ function App() {
         </header>
 
         {/* Nội dung cuộc trò chuyện hoặc Màn hình Chào mừng kiểu ChatGPT */}
-        <div className="chatgpt-scroll-viewport">
+        <div
+          ref={scrollViewportRef}
+          className="chatgpt-scroll-viewport"
+          onScroll={handleViewportScroll}
+        >
           {messages.length === 0 ? (
             <div className="chatgpt-welcome">
               <div className="welcome-badge-hero">

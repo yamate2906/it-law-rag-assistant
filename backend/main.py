@@ -88,8 +88,19 @@ _executor = ThreadPoolExecutor(max_workers=6)
 
 try:
     _sql_engine = create_engine(CONNECTION_STRING, pool_pre_ping=True, pool_size=5)
+    with _sql_engine.begin() as _conn:
+        _conn.execute(sql_text("CREATE EXTENSION IF NOT EXISTS pg_trgm;"))
+        _conn.execute(
+            sql_text(
+                """
+                CREATE INDEX IF NOT EXISTS idx_pg_embedding_art_doc
+                ON langchain_pg_embedding (((cmetadata->>'article_number')), ((cmetadata->>'doc_code')));
+                """
+            )
+        )
 except Exception:
-    _sql_engine = None
+    if "_sql_engine" not in locals():
+        _sql_engine = None
 
 try:
     vector_db = PGVector(

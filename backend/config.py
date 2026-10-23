@@ -43,20 +43,24 @@ def create_llm(temperature: float = 0.0, timeout: int = 120):
     """Ưu tiên DeepSeek API gốc nếu có DEEPSEEK_API_KEY, ngược lại dùng OpenRouter."""
     from langchain_openai import ChatOpenAI
 
-    if DEEPSEEK_API_KEY:
+    load_dotenv(BACKEND_DIR / ".env", override=True)
+    deepseek_key = os.getenv("DEEPSEEK_API_KEY")
+    openrouter_key = os.getenv("OPENROUTER_API_KEY")
+
+    if deepseek_key:
         return ChatOpenAI(
-            model=DEEPSEEK_MODEL,
-            api_key=DEEPSEEK_API_KEY,
-            base_url=DEEPSEEK_BASE_URL,
+            model=os.getenv("DEEPSEEK_MODEL", DEEPSEEK_MODEL),
+            api_key=deepseek_key,
+            base_url=os.getenv("DEEPSEEK_BASE_URL", DEEPSEEK_BASE_URL),
             temperature=temperature,
             max_retries=3,
             timeout=timeout,
         )
-    if OPENROUTER_API_KEY:
+    if openrouter_key:
         return ChatOpenAI(
-            model=OPENROUTER_CHAT_MODEL,
-            api_key=OPENROUTER_API_KEY,
-            base_url=OPENROUTER_BASE_URL,
+            model=os.getenv("OPENROUTER_CHAT_MODEL", OPENROUTER_CHAT_MODEL),
+            api_key=openrouter_key,
+            base_url=os.getenv("OPENROUTER_BASE_URL", OPENROUTER_BASE_URL),
             temperature=temperature,
             max_retries=3,
             timeout=timeout,
@@ -68,18 +72,24 @@ def create_llm(temperature: float = 0.0, timeout: int = 120):
 
 @lru_cache(maxsize=1)
 def get_embeddings():
-    if EMBEDDING_PROVIDER == "openai":
+    load_dotenv(BACKEND_DIR / ".env", override=True)
+    provider = os.getenv("EMBEDDING_PROVIDER", EMBEDDING_PROVIDER).strip().lower()
+    if provider == "openai":
         from langchain_openai import OpenAIEmbeddings
 
         if not os.getenv("OPENAI_API_KEY"):
             raise RuntimeError("Thiếu OPENAI_API_KEY trong backend/.env.")
-        return OpenAIEmbeddings(model=OPENAI_EMBEDDING_MODEL)
-    if EMBEDDING_PROVIDER == "gemini":
+        return OpenAIEmbeddings(model=os.getenv("OPENAI_EMBEDDING_MODEL", OPENAI_EMBEDDING_MODEL))
+    if provider == "gemini":
         from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
-        if not os.getenv("GEMINI_API_KEY") and not os.getenv("GOOGLE_API_KEY"):
+        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        if not api_key:
             raise RuntimeError("Thiếu GEMINI_API_KEY trong backend/.env.")
-        return GoogleGenerativeAIEmbeddings(model=EMBEDDING_MODEL)
+        return GoogleGenerativeAIEmbeddings(
+            model=os.getenv("GEMINI_EMBEDDING_MODEL", EMBEDDING_MODEL),
+            google_api_key=api_key,
+        )
     raise RuntimeError("EMBEDDING_PROVIDER phải là 'gemini' hoặc 'openai'.")
 
 
