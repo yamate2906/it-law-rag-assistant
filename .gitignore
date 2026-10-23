@@ -10,5 +10,6 @@ frontend/dist/
 .env
 backend/.env
 
-# File hệ thống
+# File hệ thống & bộ nhớ đệm OCR
 .DS_Store
+data/.ocr_cache/

@@ -12,7 +12,7 @@ BACKEND_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = BACKEND_DIR.parent
 DATA_DIR = PROJECT_DIR / "data"
 
-load_dotenv(BACKEND_DIR / ".env")
+load_dotenv(BACKEND_DIR / ".env", override=True)
 
 # --- Khối Neural: PostgreSQL + pgvector -------------------------------------
 DATABASE_URL = os.getenv(
@@ -20,7 +20,9 @@ DATABASE_URL = os.getenv(
     "postgresql+psycopg2://admin:admin2906@localhost:5433/law_db",
 )
 COLLECTION_NAME = os.getenv("PGVECTOR_COLLECTION", "it_law_documents")
+EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "gemini").strip().lower()
 EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001")
+OPENAI_EMBEDDING_MODEL = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
 
 # --- Khối Symbolic: Neo4j ----------------------------------------------------
 NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
@@ -66,11 +68,19 @@ def create_llm(temperature: float = 0.0, timeout: int = 120):
 
 @lru_cache(maxsize=1)
 def get_embeddings():
-    from langchain_google_genai import GoogleGenerativeAIEmbeddings
+    if EMBEDDING_PROVIDER == "openai":
+        from langchain_openai import OpenAIEmbeddings
 
-    if not os.getenv("GEMINI_API_KEY") and not os.getenv("GOOGLE_API_KEY"):
-        raise RuntimeError("Thiếu GEMINI_API_KEY trong backend/.env.")
-    return GoogleGenerativeAIEmbeddings(model=EMBEDDING_MODEL)
+        if not os.getenv("OPENAI_API_KEY"):
+            raise RuntimeError("Thiếu OPENAI_API_KEY trong backend/.env.")
+        return OpenAIEmbeddings(model=OPENAI_EMBEDDING_MODEL)
+    if EMBEDDING_PROVIDER == "gemini":
+        from langchain_google_genai import GoogleGenerativeAIEmbeddings
+
+        if not os.getenv("GEMINI_API_KEY") and not os.getenv("GOOGLE_API_KEY"):
+            raise RuntimeError("Thiếu GEMINI_API_KEY trong backend/.env.")
+        return GoogleGenerativeAIEmbeddings(model=EMBEDDING_MODEL)
+    raise RuntimeError("EMBEDDING_PROVIDER phải là 'gemini' hoặc 'openai'.")
 
 
 def create_neo4j_driver():

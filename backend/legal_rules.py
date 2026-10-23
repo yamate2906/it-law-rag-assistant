@@ -54,18 +54,69 @@ VALID_DOC_CODES = {
     "26/2026/VBHN-BKHCN",
     "20/2026/QH16",
     "100/2015/QH13",
+    # Các văn bản PDF scan trong kho dữ liệu data/
+    "12/2017/QH14",
+    "91/2015/QH13",
+    "86/2015/QH13",
+    "71/2025/QH15",
+    "91/2025/QH15",
+    "93/2025/QH15",
+    "116/2025/QH15",
+    "122/2025/QH15",
+    "133/2025/QH15",
+    "134/2025/QH15",
+    "13/2023/NĐ-CP",
+    "147/2024/NĐ-CP",
+    "163/2024/NĐ-CP",
+    "165/2025/NĐ-CP",
+    "23/2025/NĐ-CP",
+    "356/2025/NĐ-CP",
+    "142/2026/NĐ-CP",
+    "224/2026/NĐ-CP",
+    "248/2026/NĐ-CP",
+    "333/2026/NĐ-CP",
+    "52/2013/NĐ-CP",
+    "85/2016/NĐ-CP",
+    "48/CP-KGVX",
+}
+
+KNOWN_DECREE_NUMBERS: dict[int, str] = {
+    15: "15/2020/NĐ-CP",
+    14: "15/2020/NĐ-CP",
+    26: "26/2026/VBHN-BKHCN",
+    13: "13/2023/NĐ-CP",
+    23: "23/2025/NĐ-CP",
+    52: "52/2013/NĐ-CP",
+    85: "85/2016/NĐ-CP",
+    142: "142/2026/NĐ-CP",
+    147: "147/2024/NĐ-CP",
+    163: "163/2024/NĐ-CP",
+    165: "165/2025/NĐ-CP",
+    224: "224/2026/NĐ-CP",
+    248: "248/2026/NĐ-CP",
+    333: "333/2026/NĐ-CP",
+    356: "356/2025/NĐ-CP",
 }
 
 LAW_NAME_HINTS: list[tuple[re.Pattern, str]] = [
-    (re.compile(r"luật\s+an\s+ninh\s+mạng", re.IGNORECASE), "24/2018/QH14"),
+    (re.compile(r"luật\s+an\s+ninh\s+mạng\s*2025", re.IGNORECASE), "116/2025/QH15"),
+    (re.compile(r"luật\s+an\s+ninh\s+mạng(?!\s*2025)", re.IGNORECASE), "24/2018/QH14"),
+    (re.compile(r"luật\s+an\s+toàn\s+thông\s+tin\s+mạng", re.IGNORECASE), "86/2015/QH13"),
     (re.compile(r"luật\s+(?:công\s+nghệ\s+thông\s+tin|cntt)", re.IGNORECASE), "67/2006/QH11"),
     (re.compile(r"luật\s+giao\s+dịch\s+điện\s+tử", re.IGNORECASE), "20/2023/QH15"),
     (re.compile(r"luật\s+viễn\s+thông", re.IGNORECASE), "24/2023/QH15"),
-    (re.compile(r"luật\s+dữ\s+liệu", re.IGNORECASE), "60/2024/QH15"),
+    (re.compile(r"luật\s+dữ\s+liệu(?!\s+cá\s+nhân)", re.IGNORECASE), "60/2024/QH15"),
+    (re.compile(r"luật\s+bảo\s+vệ\s+dữ\s+liệu\s+cá\s+nhân", re.IGNORECASE), "91/2025/QH15"),
+    (re.compile(r"luật\s+công\s+nghiệp\s+công\s+nghệ\s+số", re.IGNORECASE), "71/2025/QH15"),
+    (re.compile(r"luật\s+trí\s+tuệ\s+nhân\s+tạo", re.IGNORECASE), "134/2025/QH15"),
+    (re.compile(r"luật\s+công\s+nghệ\s+cao", re.IGNORECASE), "133/2025/QH15"),
+    (re.compile(r"luật\s+khoa\s+học\s*,?\s*công\s+nghệ", re.IGNORECASE), "93/2025/QH15"),
+    (re.compile(r"luật\s+thương\s+mại\s+điện\s+tử", re.IGNORECASE), "122/2025/QH15"),
     (re.compile(r"luật\s+sở\s+hữu\s+trí\s+tuệ", re.IGNORECASE), "07/2022/QH15"),
     (re.compile(r"luật\s+bảo\s+vệ\s+quyền\s+lợi\s+người\s+tiêu\s+dùng", re.IGNORECASE), "19/2023/QH15"),
     (re.compile(r"luật\s+tần\s+số\s+vô\s+tuyến\s+điện", re.IGNORECASE), "42/2009/QH12"),
     (re.compile(r"bộ\s+luật\s+hình\s+sự", re.IGNORECASE), "100/2015/QH13"),
+    (re.compile(r"bộ\s+luật\s+dân\s+sự", re.IGNORECASE), "91/2015/QH13"),
 ]
 
 # Quy tắc độ tuổi - Luật Xử lý vi phạm hành chính 2012 (sửa đổi 2020).
@@ -109,28 +160,64 @@ _IND_PATTERN = re.compile(
     r"người chơi|một người|người nào|ai đó|bạn)\b",
     re.IGNORECASE,
 )
-_AGE_PATTERN = re.compile(r"(\d{1,2})\s*tuổi", re.IGNORECASE)
+# Loại bỏ cụm xưng hô xã giao khi đặt câu hỏi ("cho tôi hỏi", "em xin hỏi"...) trước khi nhận diện chủ thể
+_POLITE_PREFIX_PATTERN = re.compile(
+    r"\b(?:cho\s+|xin\s+)?(?:tôi|mình|em|anh|chị|bạn|chúng\s+tôi)\s+"
+    r"(?:xin\s+)?(?:hỏi|nhờ|tư\s+vấn|tra\s+cứu)\b",
+    re.IGNORECASE,
+)
+# Nhận diện chính xác các cụm khoảng tuổi pháp lý trước khi bắt số tuổi đơn lẻ
+_AGE_SPAN_14_16 = re.compile(
+    r"(?:từ\s+)?(?:đủ\s+)?14\s*(?:tuổi\s*)?(?:đến|tới|-|–)\s*(?:dưới\s+)?16\s*tuổi",
+    re.IGNORECASE,
+)
+_AGE_SPAN_16_18 = re.compile(
+    r"(?:từ\s+)?(?:đủ\s+)?16\s*(?:tuổi\s*)?(?:đến|tới|-|–)\s*(?:dưới\s+)?18\s*tuổi",
+    re.IGNORECASE,
+)
+_AGE_UNDER_14 = re.compile(r"dưới\s+14\s*tuổi", re.IGNORECASE)
+_AGE_UNDER_16 = re.compile(r"dưới\s+16\s*tuổi", re.IGNORECASE)
+_AGE_UNDER_18 = re.compile(r"dưới\s+18\s*tuổi", re.IGNORECASE)
+_EXACT_AGE_PATTERN = re.compile(r"(?<!dưới\s)(?<!dưới\s\s)\b(\d{1,2})\s*tuổi", re.IGNORECASE)
 _MINOR_PATTERN = re.compile(r"\b(trẻ em|vị thành niên|chưa thành niên)\b", re.IGNORECASE)
 _ARTICLE_PATTERN = re.compile(r"Điều\s+(\d{1,3})", re.IGNORECASE)
 _DOC_CODE_PATTERN = re.compile(r"(\d+/\d{4}/(?:NĐ-CP|ND-CP|QH\d{1,2}|VBHN-[A-ZĐ0-9\-]+))", re.IGNORECASE)
 _DECREE_PATTERN = re.compile(r"(?:ngh[iị]\s*[dđ][iị]nh)(?:\s+s[oố])?\s*(\d+)", re.IGNORECASE)
 
 
+def _extract_age(text: str) -> int | None:
+    if _AGE_SPAN_14_16.search(text):
+        return 15
+    if _AGE_SPAN_16_18.search(text):
+        return 17
+    if _AGE_UNDER_14.search(text):
+        return 13
+    exact = _EXACT_AGE_PATTERN.search(text)
+    if exact:
+        return int(exact.group(1))
+    if _AGE_UNDER_16.search(text):
+        return 15
+    if _AGE_UNDER_18.search(text):
+        return 17
+    return None
+
+
 def analyze_question(question: str) -> QueryFacts:
     text = question or ""
+    cleaned_for_subject = _POLITE_PREFIX_PATTERN.sub(" ", text)
+
     subjects: list[str] = []
-    if _ORG_PATTERN.search(text):
+    if _ORG_PATTERN.search(cleaned_for_subject):
         subjects.append(ORGANIZATION)
-    # Bỏ cụm "công ty tôi" trước khi tìm chủ thể cá nhân để tránh nhận nhầm
-    residual = _ORG_PATTERN.sub(" ", text)
-    if _IND_PATTERN.search(residual) or _AGE_PATTERN.search(text) or _MINOR_PATTERN.search(text):
+    # Bỏ cụm "công ty tôi" và đại từ xã giao trước khi tìm chủ thể cá nhân để tránh nhận nhầm
+    residual = _ORG_PATTERN.sub(" ", cleaned_for_subject)
+    age = _extract_age(text)
+    if _IND_PATTERN.search(residual) or age is not None or _MINOR_PATTERN.search(text):
         subjects.append(INDIVIDUAL)
     detected = bool(subjects)
     if not subjects:
         subjects = [ORGANIZATION, INDIVIDUAL]
 
-    age_match = _AGE_PATTERN.search(text)
-    age = int(age_match.group(1)) if age_match else None
     if age is not None and INDIVIDUAL not in subjects:
         subjects.append(INDIVIDUAL)
 
@@ -162,15 +249,13 @@ def analyze_question(question: str) -> QueryFacts:
         else:
             out_of_scope_docs.append(normalized_code)
 
-    # Nhận diện số hiệu Nghị định viết tắt (ví dụ: Nghị định 15, Nghị định 10000...)
+    # Nhận diện số hiệu Nghị định viết tắt (ví dụ: Nghị định 15, Nghị định 13, Nghị định 147, Nghị định 10000...)
     for dec_num_str in _DECREE_PATTERN.findall(text):
         num = int(dec_num_str)
-        if num in {15, 14}:
-            if "15/2020/NĐ-CP" not in doc_hints:
-                doc_hints.append("15/2020/NĐ-CP")
-        elif num == 26:
-            if "26/2026/VBHN-BKHCN" not in doc_hints:
-                doc_hints.append("26/2026/VBHN-BKHCN")
+        if num in KNOWN_DECREE_NUMBERS:
+            mapped_dec = KNOWN_DECREE_NUMBERS[num]
+            if mapped_dec not in doc_hints:
+                doc_hints.append(mapped_dec)
         elif num > 500:
             if num not in invalid_numbers:
                 invalid_numbers.add(num)

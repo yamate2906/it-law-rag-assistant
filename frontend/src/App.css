@@ -1,633 +1,1095 @@
 /* ==========================================================================
-   IT Law Assistant - Neuro-Symbolic UI Design System
+   LexIT Assistant - Modern ChatGPT Interface + Interactive 3D Neo4j Explorer
    ========================================================================== */
 
 :root {
-  --primary-50: #eff6ff;
-  --primary-100: #dbeafe;
-  --primary-500: #3b82f6;
-  --primary-600: #2563eb;
-  --primary-700: #1d4ed8;
-  --success-50: #f0fdf4;
-  --success-600: #16a34a;
-  --warning-50: #fffbeb;
-  --warning-600: #d97706;
-  --danger-50: #fef2f2;
-  --danger-600: #dc2626;
-  --purple-50: #faf5ff;
-  --purple-600: #9333ea;
-  --gray-50: #f8fafc;
-  --gray-100: #f1f5f9;
-  --gray-200: #e2e8f0;
-  --gray-300: #cbd5e1;
-  --gray-600: #475569;
-  --gray-700: #334155;
-  --gray-800: #1e293b;
-  --gray-900: #0f172a;
+  --bg-main: #ffffff;
+  --bg-subtle: #f8fafc;
+  --border-light: #e5e7eb;
+  --border-medium: #d1d5db;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #64748b;
+  --accent-blue: #2563eb;
+  --accent-blue-soft: #eff6ff;
+  --accent-purple: #7c3aed;
+  --accent-purple-soft: #f5f3ff;
+  --accent-emerald: #10b981;
+  --accent-danger: #dc2626;
+
+  /* Sidebar - nền sáng (đồng bộ với khu vực chat) */
+  --bg-sidebar: #f7f8fa;
+  --bg-sidebar-hover: #eceef2;
+  --bg-sidebar-active: #e2e8f0;
+  --bg-sidebar-footer: #f1f3f6;
+  --sidebar-border: #e5e7eb;
+  --sidebar-text: #334155;
+  --sidebar-text-strong: #0f172a;
+  --sidebar-text-muted: #64748b;
+  --sidebar-btn-bg: #ffffff;
+  --sidebar-btn-border: #d8dee8;
+  --sidebar-btn-hover: #f1f5f9;
+  --sidebar-scroll-thumb: #cbd5e1;
+  --sidebar-banner-bg: linear-gradient(135deg, rgba(37, 99, 235, 0.10), rgba(124, 58, 237, 0.10));
+  --sidebar-banner-bg-hover: linear-gradient(135deg, rgba(37, 99, 235, 0.18), rgba(124, 58, 237, 0.18));
+  --sidebar-banner-border: rgba(37, 99, 235, 0.30);
+  --sidebar-banner-sub: #2563eb;
+  --sidebar-scenario-icon: #2563eb;
+  --sidebar-link-bg: rgba(37, 99, 235, 0.10);
+  --sidebar-link-border: rgba(37, 99, 235, 0.30);
+  --sidebar-link-text: #1d4ed8;
 }
 
-.app-container {
+.chatgpt-app.dark-theme {
+  --bg-sidebar: #171717;
+  --bg-sidebar-hover: #262626;
+  --bg-sidebar-active: #2f2f2f;
+  --bg-sidebar-footer: #121212;
+  --sidebar-border: #262626;
+  --sidebar-text: #d1d5db;
+  --sidebar-text-strong: #ffffff;
+  --sidebar-text-muted: #9ca3af;
+  --sidebar-btn-bg: #262626;
+  --sidebar-btn-border: #383838;
+  --sidebar-btn-hover: #323232;
+  --sidebar-scroll-thumb: #333333;
+  --sidebar-banner-bg: linear-gradient(135deg, rgba(37, 99, 235, 0.24), rgba(124, 58, 237, 0.24));
+  --sidebar-banner-bg-hover: linear-gradient(135deg, rgba(37, 99, 235, 0.36), rgba(124, 58, 237, 0.36));
+  --sidebar-banner-border: rgba(96, 165, 250, 0.38);
+  --sidebar-banner-sub: #93c5fd;
+  --sidebar-scenario-icon: #60a5fa;
+  --sidebar-link-bg: rgba(59, 130, 246, 0.18);
+  --sidebar-link-border: rgba(59, 130, 246, 0.35);
+  --sidebar-link-text: #93c5fd;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--text-primary);
+  background: var(--bg-main);
+}
+
+.chatgpt-app {
   display: flex;
   width: 100vw;
   height: 100vh;
   overflow: hidden;
-  background-color: #f8fafc;
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
-  color: var(--gray-800);
+  background: var(--bg-main);
+  transition: background 0.2s ease, color 0.2s ease;
 }
 
-/* --------------------------------------------------------------------------
-   1. SIDEBAR (Bên trái)
-   -------------------------------------------------------------------------- */
-.sidebar {
-  width: 290px;
-  background-color: #ffffff;
-  border-right: 1px solid var(--gray-200);
+/* ==========================================================================
+   1. SIDEBAR (BÊN TRÁI) - TỰ ĐỔI THEO NỀN SÁNG / TỐI
+   ========================================================================== */
+.chatgpt-sidebar {
+  width: 276px;
+  background: var(--bg-sidebar);
+  color: var(--sidebar-text);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  overflow-y: auto;
+  transition: width 0.22s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.18s ease, background 0.2s ease;
+  overflow: hidden;
+  border-right: 1px solid var(--sidebar-border);
 }
 
-.sidebar-header {
-  padding: 18px 20px;
+.chatgpt-sidebar.collapsed {
+  width: 0;
+  border-right: none;
+}
+
+.sidebar-top-bar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  border-bottom: 1px solid var(--gray-100);
+  gap: 8px;
+  padding: 12px 12px 8px 12px;
 }
 
-.logo-icon {
-  background: linear-gradient(135deg, #2563eb, #1d4ed8);
-  color: #ffffff;
-  padding: 8px;
-  border-radius: 10px;
+.sidebar-icon-btn {
+  background: transparent;
+  border: none;
+  color: var(--sidebar-text-muted);
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 4px 6px -1px rgba(37, 99, 235, 0.2);
-}
-
-.sidebar-title {
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--gray-900);
-  margin: 0;
-  letter-spacing: -0.01em;
-}
-
-.sidebar-sub {
-  font-size: 11px;
-  color: var(--primary-600);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.sidebar-section {
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--gray-100);
-}
-
-.section-header {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  color: var(--gray-600);
-  letter-spacing: 0.05em;
-  margin-top: 0;
-  margin-bottom: 10px;
-}
-
-.setting-card {
-  background: var(--gray-50);
-  border: 1px solid var(--gray-200);
-  border-radius: 10px;
-  padding: 12px;
-}
-
-.setting-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.setting-label {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--gray-800);
-}
-
-.toggle-btn {
-  background: none;
-  border: none;
   cursor: pointer;
-  padding: 0;
+  transition: background 0.15s, color 0.15s;
+}
+
+.sidebar-icon-btn:hover {
+  background: var(--bg-sidebar-hover);
+  color: var(--sidebar-text-strong);
+}
+
+.new-chat-btn {
+  flex: 1;
   display: flex;
   align-items: center;
+  gap: 8px;
+  background: var(--sidebar-btn-bg);
+  color: var(--sidebar-text-strong);
+  border: 1px solid var(--sidebar-btn-border);
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
-.setting-desc {
-  font-size: 11px;
-  color: var(--gray-600);
-  margin: 6px 0 0 0;
-  line-height: 1.4;
+.new-chat-btn:hover {
+  background: var(--sidebar-btn-hover);
+  border-color: var(--border-medium);
 }
 
-.status-list {
+/* Banner mở Không gian Đồ thị 3D Neo4j */
+.sidebar-3d-banner {
+  padding: 6px 12px 10px 12px;
+}
+
+.explore-3d-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--sidebar-banner-bg);
+  border: 1px solid var(--sidebar-banner-border);
+  border-radius: 12px;
+  color: var(--sidebar-text-strong);
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.18s ease;
+}
+
+.explore-3d-btn:hover {
+  background: var(--sidebar-banner-bg-hover);
+  border-color: var(--accent-blue);
+  transform: translateY(-1px);
+}
+
+.explore-3d-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #2563eb, #7c3aed);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: 0 2px 10px rgba(59, 130, 246, 0.35);
+}
+
+.explore-3d-text {
+  flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  overflow: hidden;
 }
 
-.status-row {
+.explore-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--sidebar-text-strong);
+}
+
+.explore-sub {
+  font-size: 10.5px;
+  color: var(--sidebar-banner-sub);
+  margin-top: 1px;
+}
+
+/* Vùng cuộn lịch sử & kịch bản */
+.sidebar-scroll-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 10px 14px 10px;
+}
+
+.sidebar-scroll-area::-webkit-scrollbar {
+  width: 5px;
+}
+
+.sidebar-scroll-area::-webkit-scrollbar-thumb {
+  background: var(--sidebar-scroll-thumb);
+  border-radius: 4px;
+}
+
+.sidebar-group-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--sidebar-text-muted);
+  padding: 6px 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.conv-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.conv-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  cursor: pointer;
+  color: var(--sidebar-text);
+  font-size: 13px;
+  transition: background 0.14s ease;
+}
+
+.conv-item:hover {
+  background: var(--bg-sidebar-hover);
+  color: var(--sidebar-text-strong);
+}
+
+.conv-item.active {
+  background: var(--bg-sidebar-active);
+  color: var(--sidebar-text-strong);
+  font-weight: 600;
+}
+
+.conv-icon {
+  color: var(--sidebar-text-muted);
+  flex-shrink: 0;
+}
+
+.conv-title {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.conv-delete-btn {
+  opacity: 0;
+  background: none;
+  border: none;
+  color: var(--sidebar-text-muted);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  display: flex;
+}
+
+.conv-item:hover .conv-delete-btn {
+  opacity: 1;
+}
+
+.conv-delete-btn:hover {
+  color: #ef4444;
+}
+
+.sidebar-scenarios {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.scenario-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: var(--sidebar-text);
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.14s ease;
+}
+
+.scenario-item:hover:not(:disabled) {
+  background: var(--bg-sidebar-hover);
+  border-color: var(--sidebar-btn-border);
+  color: var(--sidebar-text-strong);
+}
+
+.scenario-item:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.scenario-icon {
+  color: var(--sidebar-scenario-icon);
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.scenario-text {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.scenario-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--sidebar-text-strong);
+}
+
+.scenario-tag {
+  font-size: 10.5px;
+  color: var(--sidebar-text-muted);
+  margin-top: 1px;
+}
+
+.sidebar-bottom-status {
+  padding: 10px 14px;
+  border-top: 1px solid var(--sidebar-border);
+  background: var(--bg-sidebar-footer);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.infra-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
-  color: var(--gray-700);
-  background: var(--gray-50);
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--gray-200);
+  font-size: 11.5px;
+  color: var(--sidebar-text);
 }
 
-.status-indicator {
-  width: 8px;
-  height: 8px;
+.status-dot {
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   flex-shrink: 0;
 }
 
-.status-indicator.online {
-  background-color: var(--success-600);
-  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.2);
+.status-dot.online {
+  background: #10b981;
+  box-shadow: 0 0 6px #10b981;
 }
 
-.status-indicator.checking {
-  background-color: var(--warning-600);
-  box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.2);
+.status-dot.offline {
+  background: #f59e0b;
 }
 
-.status-label {
+.infra-name {
   flex: 1;
+  font-size: 11.5px;
 }
 
-.status-link {
-  color: var(--primary-600);
-  display: flex;
-  align-items: center;
-}
-
-.sample-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.sample-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 9px 10px;
-  background: #ffffff;
-  border: 1px solid var(--gray-200);
-  border-radius: 8px;
+.infra-action-link {
+  background: var(--sidebar-link-bg);
+  color: var(--sidebar-link-text);
+  border: 1px solid var(--sidebar-link-border);
+  border-radius: 5px;
+  padding: 2px 7px;
+  font-size: 10.5px;
+  font-weight: 600;
   cursor: pointer;
-  text-align: left;
-  transition: all 0.15s ease;
 }
 
-.sample-item:hover {
-  background: var(--primary-50);
-  border-color: var(--primary-500);
-  transform: translateY(-1px);
+.infra-action-link:hover {
+  background: var(--accent-blue);
+  color: #ffffff;
 }
 
-.sample-icon {
-  color: var(--primary-600);
-  margin-top: 2px;
-  flex-shrink: 0;
-}
-
-.sample-content {
+.infra-refresh {
+  background: none;
+  border: none;
+  color: var(--sidebar-text-muted);
+  cursor: pointer;
+  padding: 2px;
   display: flex;
-  flex-direction: column;
-  overflow: hidden;
 }
 
-.sample-title {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--gray-800);
+.infra-refresh:hover {
+  color: var(--sidebar-text-strong);
 }
 
-.sample-preview {
-  font-size: 10px;
-  color: var(--gray-600);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  margin-top: 2px;
-}
-
-.doc-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  background: var(--gray-50);
-  border-radius: 8px;
-  margin-bottom: 6px;
-  border: 1px solid var(--gray-200);
-}
-
-.doc-icon {
-  color: var(--primary-600);
-}
-
-.doc-info {
-  display: flex;
-  flex-direction: column;
-}
-
-.doc-name {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--gray-800);
-}
-
-.doc-meta {
-  font-size: 9.5px;
-  color: var(--gray-600);
-}
-
-.sidebar-footer {
-  margin-top: auto;
-  padding: 14px 20px;
-  border-top: 1px solid var(--gray-100);
-  text-align: center;
-}
-
-.footer-badge {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--gray-600);
-  background: var(--gray-100);
-  padding: 4px 8px;
-  border-radius: 6px;
-}
-
-/* --------------------------------------------------------------------------
-   2. KHU VỰC CHAT TRUNG TÂM
-   -------------------------------------------------------------------------- */
-.chat-main {
+/* ==========================================================================
+   2. KHU VỰC TRÒ CHUYỆN TRUNG TÂM (CHATGPT MAIN VIEW)
+   ========================================================================== */
+.chatgpt-main {
   flex: 1;
   display: flex;
   flex-direction: column;
-  background-color: #f8fafc;
+  background: #ffffff;
   overflow: hidden;
   position: relative;
 }
 
-.chat-header {
-  padding: 14px 28px;
-  background-color: #ffffff;
-  border-bottom: 1px solid var(--gray-200);
+.chatgpt-topbar {
+  height: 54px;
+  padding: 0 20px;
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #f1f5f9;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(8px);
+  flex-shrink: 0;
 }
 
-.header-title {
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.topbar-icon-btn {
+  background: #f8fafc;
+  border: 1px solid var(--border-light);
+  color: var(--text-secondary);
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.topbar-icon-btn:hover {
+  background: #f1f5f9;
+  color: var(--text-primary);
+}
+
+.model-selector-pill {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  cursor: default;
+  transition: background 0.15s;
+}
+
+.model-selector-pill:hover {
+  background: #f8fafc;
+}
+
+.model-icon {
+  color: var(--accent-blue);
+}
+
+.model-name {
   font-size: 15px;
   font-weight: 700;
-  color: var(--gray-900);
-  margin: 0;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
 }
 
-.header-tag {
+.model-version {
   font-size: 11px;
-  color: var(--primary-600);
   font-weight: 600;
-  margin-top: 2px;
-  display: inline-block;
+  color: var(--accent-blue);
+  background: var(--accent-blue-soft);
+  padding: 2px 8px;
+  border-radius: 999px;
 }
 
-.panel-toggle-btn {
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.topbar-pill-btn {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 7px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--gray-200);
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border-light);
   background: #ffffff;
-  font-size: 12px;
+  color: var(--text-secondary);
+  font-size: 12.5px;
   font-weight: 600;
-  color: var(--gray-700);
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
-.panel-toggle-btn:hover, .panel-toggle-btn.active {
-  background: var(--primary-50);
-  color: var(--primary-600);
-  border-color: var(--primary-500);
+.topbar-pill-btn:hover {
+  background: #f8fafc;
+  border-color: var(--border-medium);
 }
 
-.chat-viewport {
+.topbar-pill-btn.active-ab {
+  background: #eff6ff;
+  color: var(--accent-blue);
+  border-color: #93c5fd;
+}
+
+.topbar-pill-btn.active-graph {
+  background: #f5f3ff;
+  color: var(--accent-purple);
+  border-color: #c4b5fd;
+}
+
+/* Vùng cuộn tin nhắn */
+.chatgpt-scroll-viewport {
   flex: 1;
   overflow-y: auto;
-  padding: 24px 32px;
+  padding: 24px 20px 16px 20px;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  align-items: center;
 }
 
-.message-row {
+/* Màn hình chào mừng kiểu ChatGPT */
+.chatgpt-welcome {
+  max-width: 780px;
+  width: 100%;
+  margin: auto;
   display: flex;
-  gap: 12px;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 16px 8px;
+}
+
+.welcome-badge-hero {
+  width: 54px;
+  height: 54px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #2563eb, #7c3aed);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 10px 25px -5px rgba(37, 99, 235, 0.4);
+  margin-bottom: 16px;
+}
+
+.welcome-heading {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0 0 24px 0;
+  letter-spacing: -0.02em;
+}
+
+.welcome-subtext {
+  font-size: 14px;
+  color: var(--text-secondary);
+  max-width: 640px;
+  line-height: 1.55;
+  margin: 0 0 16px 0;
+}
+
+.welcome-stats-pills {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+
+.welcome-stats-pills span {
+  font-size: 12px;
+  font-weight: 600;
+  color: #334155;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  padding: 5px 12px;
+  border-radius: 999px;
+}
+
+.welcome-3d-trigger {
+  font-size: 12px;
+  font-weight: 700;
+  color: #ffffff;
+  background: linear-gradient(135deg, #2563eb, #7c3aed);
+  border: none;
+  padding: 5px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25);
+}
+
+.welcome-3d-trigger:hover {
+  opacity: 0.94;
+}
+
+.starter-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
   width: 100%;
 }
 
-.user-row {
-  justify-content: flex-end;
+@media (max-width: 720px) {
+  .starter-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
-.avatar {
+.starter-card {
+  background: #ffffff;
+  border: 1px solid var(--border-light);
+  border-radius: 14px;
+  padding: 13px 15px;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.16s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.starter-card:hover {
+  background: #f8fafc;
+  border-color: #93c5fd;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
+  transform: translateY(-1px);
+}
+
+.starter-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.starter-card-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.starter-card-tag {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent-blue);
+  background: var(--accent-blue-soft);
+  padding: 2px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.starter-card-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Luồng tin nhắn giống ChatGPT */
+.chatgpt-thread {
+  width: 100%;
+  max-width: 780px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding-bottom: 20px;
+}
+
+.chatgpt-thread.wide {
+  max-width: 1040px;
+}
+
+.chatgpt-user-turn {
+  display: flex;
+  justify-content: flex-end;
+  width: 100%;
+}
+
+.chatgpt-user-bubble {
+  max-width: 75%;
+  background: #f4f4f5;
+  color: #0f172a;
+  padding: 12px 18px;
+  border-radius: 22px;
+  font-size: 14.5px;
+  line-height: 1.55;
+  border: 1px solid #e4e4e7;
+}
+
+.chatgpt-bot-turn {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  width: 100%;
+}
+
+.chatgpt-bot-avatar {
   width: 32px;
   height: 32px;
   border-radius: 50%;
+  background: linear-gradient(135deg, #2563eb, #7c3aed);
+  color: #ffffff;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  margin-top: 2px;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.25);
 }
 
-.user-avatar {
-  background: var(--primary-600);
-  color: #ffffff;
-  align-self: flex-end;
+.chatgpt-bot-content {
+  flex: 1;
+  min-width: 0;
 }
 
-.bot-avatar {
-  background: #ffffff;
-  color: var(--primary-600);
-  border: 1px solid var(--gray-200);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
-}
-
-.user-bubble {
-  max-width: 68%;
-  background: linear-gradient(135deg, var(--primary-600), var(--primary-700));
-  color: #ffffff;
-  padding: 12px 18px;
-  border-radius: 16px 16px 2px 16px;
-  font-size: 14px;
-  line-height: 1.5;
-  box-shadow: 0 4px 6px -1px rgba(37, 99, 235, 0.15);
-}
-
-.bot-bubble {
-  max-width: 85%;
-  background: #ffffff;
-  color: var(--gray-800);
-  padding: 16px 22px;
-  border-radius: 16px 16px 16px 2px;
-  font-size: 14px;
-  line-height: 1.6;
-  border: 1px solid var(--gray-200);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.03);
-}
-
-.bot-bubble p {
-  margin: 0.5em 0;
-}
-
-.bot-bubble ul, .bot-bubble ol {
-  padding-left: 20px;
-  margin: 0.5em 0;
-}
-
-.bot-bubble h3, .bot-bubble h4 {
-  margin: 0.7em 0 0.3em 0;
-  color: var(--gray-900);
-}
-
-.bot-turn {
+.bot-author-line {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: 8px;
+  margin-bottom: 4px;
 }
 
-.reasoning-preview-bar {
-  padding-left: 44px;
+.bot-author-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
 }
 
-.preview-btn {
+.bot-author-badge {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent-purple);
+  background: var(--accent-purple-soft);
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+
+.markdown-prose {
+  font-size: 14.5px;
+  line-height: 1.68;
+  color: #1e293b;
+}
+
+.markdown-prose p {
+  margin: 0.55em 0;
+}
+
+.markdown-prose ul,
+.markdown-prose ol {
+  padding-left: 22px;
+  margin: 0.55em 0;
+}
+
+.markdown-prose li {
+  margin-bottom: 0.3em;
+}
+
+.markdown-prose strong {
+  color: #0f172a;
+  font-weight: 700;
+}
+
+.markdown-prose code {
+  background: #f1f5f9;
+  padding: 2px 5px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+/* Hàng nút dưới mỗi tin nhắn của Bot */
+.bot-message-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.msg-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  background: transparent;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.14s;
+}
+
+.msg-action-btn:hover {
+  background: #f8fafc;
+  color: var(--text-primary);
+}
+
+.msg-action-chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 12px;
-  background: #ffffff;
-  border: 1px solid var(--purple-600);
-  color: var(--purple-600);
-  border-radius: 20px;
+  padding: 5px 12px;
+  border-radius: 999px;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all 0.15s;
 }
 
-.preview-btn:hover {
-  background: var(--purple-50);
+.msg-action-chip.graph-chip {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1d4ed8;
 }
 
-.preview-icon {
-  color: var(--purple-600);
+.msg-action-chip.graph-chip:hover {
+  background: #dbeafe;
 }
 
-/* Comparison Container (Chế độ A/B) */
+.msg-action-chip.rule-chip {
+  background: #f5f3ff;
+  border: 1px solid #ddd6fe;
+  color: #6d28d9;
+}
+
+.msg-action-chip.rule-chip:hover {
+  background: #ede9fe;
+}
+
+/* Chế độ so sánh A/B */
 .comparison-container {
-  display: flex;
-  gap: 16px;
-  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-top: 6px;
+}
+
+@media (max-width: 900px) {
+  .comparison-container {
+    grid-template-columns: 1fr;
+  }
 }
 
 .comparison-card {
-  flex: 1;
   background: #ffffff;
   border-radius: 12px;
-  padding: 16px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
-  display: flex;
-  flex-direction: column;
+  padding: 14px 16px;
 }
 
 .naive-card {
-  border: 1px solid var(--gray-300);
-  background: #ffffff;
+  border: 1px solid var(--border-medium);
 }
 
 .hybrid-card {
-  border: 2px solid var(--primary-600);
-  background: #ffffff;
-  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.08);
+  border: 2px solid var(--accent-blue);
+  box-shadow: 0 4px 16px rgba(37, 99, 235, 0.08);
 }
 
 .card-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--gray-100);
-  margin-bottom: 12px;
+  padding-bottom: 8px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid #f1f5f9;
 }
 
 .card-badge {
   font-size: 11px;
   font-weight: 700;
-  color: var(--gray-600);
-  letter-spacing: 0.02em;
+  color: var(--text-secondary);
 }
 
 .card-badge.highlight {
-  color: var(--primary-600);
+  color: var(--accent-blue);
 }
 
 .warning-chip {
   font-size: 10px;
   font-weight: 700;
-  background: var(--danger-50);
-  color: var(--danger-600);
-  padding: 2px 6px;
-  border-radius: 4px;
+  background: #fef2f2;
+  color: #dc2626;
+  padding: 2px 7px;
+  border-radius: 999px;
 }
 
 .success-chip {
   font-size: 10px;
   font-weight: 700;
-  background: var(--success-50);
-  color: var(--success-600);
-  padding: 2px 6px;
-  border-radius: 4px;
+  background: #ecfdf5;
+  color: #059669;
+  padding: 2px 7px;
+  border-radius: 999px;
 }
 
-.card-body {
+/* Loading state */
+.chatgpt-loading-box {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  padding: 12px 16px;
+}
+
+.loading-title {
   font-size: 13.5px;
-  line-height: 1.6;
-  color: var(--gray-700);
+  font-weight: 600;
+  color: var(--text-primary);
 }
 
-/* Loading Card */
-.loading-card {
+.loading-steps-inline {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  background: #ffffff;
-  padding: 12px 18px;
-  border-radius: 16px;
-  border: 1px solid var(--gray-200);
-  font-size: 13px;
-  color: var(--gray-700);
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--accent-blue);
+  font-weight: 500;
 }
 
-.spin-icon {
-  animation: spin 1s linear infinite;
-  color: var(--primary-600);
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-.loading-text {
+/* Ô nhập câu hỏi kiểu ChatGPT Composer */
+.chatgpt-composer-zone {
+  padding: 8px 20px 14px 20px;
+  background: linear-gradient(180deg, rgba(255,255,255,0) 0%, #ffffff 25%);
   display: flex;
   flex-direction: column;
-}
-
-.loading-text small {
-  font-size: 11px;
-  color: var(--gray-600);
-}
-
-/* Chat Input Form */
-.chat-form {
-  padding: 16px 32px 20px 32px;
-  background-color: #ffffff;
-  border-top: 1px solid var(--gray-200);
-}
-
-.input-box {
-  display: flex;
   align-items: center;
+}
+
+.chatgpt-composer-box {
+  width: 100%;
+  max-width: 780px;
+  background: #f4f4f5;
+  border: 1px solid #d4d4d8;
+  border-radius: 24px;
+  padding: 12px 14px 10px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: 0 4px 18px rgba(15, 23, 42, 0.06);
+  transition: all 0.16s ease;
+}
+
+.chatgpt-composer-box:focus-within {
   background: #ffffff;
-  border: 1.5px solid var(--gray-300);
-  border-radius: 28px;
-  padding: 6px 8px 6px 20px;
-  transition: all 0.15s ease;
+  border-color: #93c5fd;
+  box-shadow: 0 6px 24px rgba(37, 99, 235, 0.12);
 }
 
-.input-box:focus-within {
-  border-color: var(--primary-600);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
-}
-
-.main-input {
-  flex: 1;
+.chatgpt-textarea {
+  width: 100%;
   border: none;
   outline: none;
-  font-size: 14px;
-  color: var(--gray-900);
   background: transparent;
+  resize: none;
+  font-family: inherit;
+  font-size: 14.5px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  max-height: 160px;
 }
 
-.send-button {
-  background: var(--primary-600);
-  color: #ffffff;
-  border: none;
-  width: 36px;
-  height: 36px;
+.composer-bottom-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.composer-tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.composer-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid #d4d4d8;
+  background: #ffffff;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.14s;
+}
+
+.composer-chip:hover {
+  border-color: #93c5fd;
+  color: var(--accent-blue);
+}
+
+.composer-chip.active {
+  background: #eff6ff;
+  border-color: #93c5fd;
+  color: var(--accent-blue);
+}
+
+.chatgpt-send-btn {
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
+  border: none;
+  background: #0f172a;
+  color: #ffffff;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all 0.15s;
 }
 
-.send-button:disabled {
-  background: var(--gray-300);
+.chatgpt-send-btn:hover:not(:disabled) {
+  background: var(--accent-blue);
+}
+
+.chatgpt-send-btn:disabled {
+  background: #d4d4d8;
   cursor: not-allowed;
 }
 
-.input-disclaimer {
-  margin-top: 8px;
-  text-align: center;
+.chatgpt-footnote {
   font-size: 11px;
-  color: var(--gray-600);
+  color: var(--text-muted);
+  margin-top: 7px;
+  text-align: center;
 }
 
-/* --------------------------------------------------------------------------
-   3. KHUNG LUỒNG SUY LUẬN SYMBOLIC (Bên phải)
-   -------------------------------------------------------------------------- */
+/* ==========================================================================
+   3. BẢNG ĐỒ THỊ NEO4J 3D & SUY LUẬN SYMBOLIC (BÊN PHẢI & TOÀN MÀN HÌNH)
+   ========================================================================== */
 .symbolic-panel {
-  width: 380px;
-  background-color: #ffffff;
-  border-left: 1px solid var(--gray-200);
+  width: 440px;
+  background: #ffffff;
+  border-left: 1px solid var(--border-light);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.03);
+  box-shadow: -4px 0 20px rgba(15, 23, 42, 0.04);
+  transition: width 0.2s ease;
+}
+
+.symbolic-panel.fullscreen-panel {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 100;
 }
 
 .panel-header {
-  padding: 16px 20px;
+  padding: 13px 16px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-bottom: 1px solid var(--gray-100);
+  border-bottom: 1px solid #f1f5f9;
 }
 
 .panel-title-group {
@@ -637,39 +1099,43 @@
 }
 
 .panel-header-icon {
-  color: var(--purple-600);
+  color: var(--accent-purple);
 }
 
 .panel-title {
-  font-size: 14px;
+  font-size: 13.5px;
   font-weight: 700;
-  color: var(--gray-900);
+  color: var(--text-primary);
   margin: 0;
 }
 
 .panel-sub {
   font-size: 10.5px;
-  color: var(--gray-600);
+  color: var(--text-muted);
 }
 
 .panel-close-btn {
-  background: none;
-  border: none;
-  color: var(--gray-600);
+  background: #f8fafc;
+  border: 1px solid var(--border-light);
+  color: var(--text-secondary);
   cursor: pointer;
-  padding: 4px;
-  border-radius: 4px;
+  padding: 5px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .panel-close-btn:hover {
-  background: var(--gray-100);
+  background: #f1f5f9;
+  color: var(--text-primary);
 }
 
 .panel-tabs {
   display: flex;
-  background: var(--gray-50);
+  background: #f8fafc;
   padding: 4px;
-  border-bottom: 1px solid var(--gray-200);
+  border-bottom: 1px solid var(--border-light);
 }
 
 .panel-tab {
@@ -681,72 +1147,545 @@
   padding: 8px 4px;
   border: none;
   background: transparent;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 600;
-  color: var(--gray-600);
-  border-radius: 6px;
+  color: var(--text-muted);
+  border-radius: 7px;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all 0.15s;
 }
 
 .panel-tab.active {
   background: #ffffff;
-  color: var(--primary-600);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  color: var(--accent-blue);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
 }
 
 .panel-content {
   flex: 1;
   overflow-y: auto;
-  padding: 16px 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 60%;
-  text-align: center;
-  color: var(--gray-600);
-  padding: 20px;
-}
-
-.empty-icon {
-  color: var(--gray-300);
-  margin-bottom: 12px;
-}
-
-.card-box {
-  background: var(--gray-50);
-  border: 1px solid var(--gray-200);
-  border-radius: 10px;
   padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ==========================================================================
+   4. COMPONENT: ĐỒ THỊ TRI THỨC NEO4J 3D (3D CANVAS EXPLORER)
+   ========================================================================== */
+.graph3d-wrapper {
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 
+.graph3d-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.graph3d-mode-switch {
+  display: flex;
+  gap: 6px;
+}
+
+.mode-pill {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-light);
+  background: #f8fafc;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.mode-pill.active {
+  background: linear-gradient(135deg, #1e3a8a, #2563eb);
+  color: #ffffff;
+  border-color: #1d4ed8;
+  box-shadow: 0 3px 10px rgba(37, 99, 235, 0.22);
+}
+
+.mode-pill:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.graph3d-select {
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-medium);
+  background: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  outline: none;
+}
+
+.graph3d-search-row {
+  display: flex;
+  gap: 6px;
+}
+
+.graph3d-search-box {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #f8fafc;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  padding: 5px 10px;
+}
+
+.graph3d-search-box input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.search-icon {
+  color: var(--text-muted);
+}
+
+.clear-search-btn {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+}
+
+.guide-trigger-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  color: #1d4ed8;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.guide-trigger-btn:hover {
+  background: #dbeafe;
+}
+
+.graph3d-stage {
+  position: relative;
+  width: 100%;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid #1e293b;
+  box-shadow: inset 0 0 24px rgba(0, 0, 0, 0.5);
+  background: #060a14;
+}
+
+.graph3d-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: grab;
+}
+
+.graph3d-canvas:active {
+  cursor: grabbing;
+}
+
+.graph3d-loading-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(6, 10, 20, 0.72);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #e2e8f0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.graph3d-controls {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.graph3d-controls button {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(15, 23, 42, 0.82);
+  color: #e2e8f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+}
+
+.graph3d-controls button:hover,
+.graph3d-controls button.active {
+  background: #2563eb;
+  border-color: #60a5fa;
+  color: #ffffff;
+}
+
+.graph3d-legend {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  max-width: 78%;
+  pointer-events: none;
+}
+
+.legend-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.78);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  color: #e2e8f0;
+  font-size: 9.5px;
+  font-weight: 600;
+}
+
+.legend-chip i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.graph3d-hint {
+  position: absolute;
+  bottom: 8px;
+  left: 10px;
+  right: 10px;
+  text-align: center;
+  font-size: 10.5px;
+  color: #94a3b8;
+  background: rgba(15, 23, 42, 0.72);
+  padding: 4px 8px;
+  border-radius: 6px;
+  pointer-events: none;
+}
+
+.graph3d-inspector {
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  border-left: 4px solid #2563eb;
+  border-radius: 10px;
+  padding: 11px 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.inspector-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.inspector-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.inspector-close {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+}
+
+.inspector-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.inspector-body {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.inspector-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.inspector-action-btn {
+  background: #eff6ff;
+  border: 1px solid #93c5fd;
+  color: #1d4ed8;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* ==========================================================================
+   5. MODAL HƯỚNG DẪN KẾT NỐI NEO4J DESKTOP & BROWSER
+   ========================================================================== */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  padding: 16px;
+}
+
+.modal-card {
+  background: #ffffff;
+  border-radius: 16px;
+  max-width: 600px;
+  width: 100%;
+  box-shadow: 0 20px 45px rgba(15, 23, 42, 0.25);
+  overflow: hidden;
+  border: 1px solid var(--border-light);
+}
+
+.modal-header {
+  padding: 16px 20px;
+  background: #f8fafc;
+  border-bottom: 1px solid var(--border-light);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.modal-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: #2563eb;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 15px;
+  color: var(--text-primary);
+}
+
+.modal-header p {
+  margin: 2px 0 0 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.modal-close-btn {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.modal-body {
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.guide-alert {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  padding: 11px 14px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #1e3a8a;
+}
+
+.Guide-step-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.conn-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.conn-item {
+  background: #f8fafc;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  padding: 8px 11px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.conn-label {
+  display: block;
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+
+.conn-val {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.copy-mini-btn {
+  border: 1px solid var(--border-light);
+  background: #ffffff;
+  color: var(--text-secondary);
+  border-radius: 6px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.cypher-box {
+  background: #0f172a;
+  color: #e2e8f0;
+  border-radius: 10px;
+  padding: 12px 14px;
+  position: relative;
+}
+
+.cypher-box pre {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-x: auto;
+  font-family: 'Consolas', monospace;
+}
+
+.copy-cypher-btn {
+  margin-top: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1px solid #334155;
+  background: #1e293b;
+  color: #93c5fd;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.open-neo4j-web-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 10px 16px;
+  border-radius: 10px;
+  background: #2563eb;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.close-modal-secondary {
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 1px solid var(--border-medium);
+  background: #ffffff;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* ==========================================================================
+   6. CÁC THẺ DẤU VẾT LOGIC & TRÍCH DẪN TRONG PANEL PHẢI
+   ========================================================================== */
+.card-box {
+  background: #f8fafc;
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
 .card-box-title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   font-size: 12px;
   font-weight: 700;
-  color: var(--gray-800);
+  color: var(--text-primary);
 }
 
-.icon-success { color: var(--success-600); }
-.icon-primary { color: var(--primary-600); }
-.icon-purple  { color: var(--purple-600); }
+.icon-success { color: var(--accent-emerald); }
+.icon-primary { color: var(--accent-blue); }
+.icon-purple  { color: var(--accent-purple); }
 
 .facts-grid {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
 }
 
 .fact-item {
@@ -755,31 +1694,25 @@
   font-size: 11.5px;
 }
 
-.fact-label {
-  color: var(--gray-600);
-}
-
-.fact-value {
-  font-weight: 600;
-  color: var(--gray-900);
-}
+.fact-label { color: var(--text-muted); }
+.fact-value { font-weight: 600; color: var(--text-primary); }
 
 .highlight-age {
-  color: var(--purple-600);
-  background: var(--purple-50);
-  padding: 2px 6px;
+  color: var(--accent-purple);
+  background: var(--accent-purple-soft);
+  padding: 1px 6px;
   border-radius: 4px;
 }
 
 .calcs-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .calc-card {
   background: #ffffff;
-  border: 1px solid var(--gray-200);
+  border: 1px solid var(--border-light);
   border-radius: 8px;
   padding: 10px 12px;
 }
@@ -787,250 +1720,637 @@
 .calc-action-title {
   font-size: 12px;
   font-weight: 700;
-  color: var(--gray-900);
-  line-height: 1.4;
+  color: var(--text-primary);
 }
 
 .calc-basis-tag {
   display: inline-block;
   font-size: 10px;
   font-weight: 600;
-  color: var(--primary-600);
-  background: var(--primary-50);
+  color: var(--accent-blue);
+  background: var(--accent-blue-soft);
   padding: 2px 6px;
   border-radius: 4px;
-  margin: 4px 0 8px 0;
+  margin-top: 4px;
 }
 
 .calc-results-list {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  border-top: 1px dashed var(--gray-200);
-  padding-top: 6px;
+  margin-top: 6px;
 }
 
 .calc-result-row {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: 6px;
+  gap: 5px;
+  font-size: 11.5px;
+}
+
+.result-subject { font-weight: 600; color: var(--text-secondary); }
+.result-amount  { font-weight: 700; color: var(--accent-danger); }
+.result-formula { font-size: 10.5px; color: var(--text-muted); }
+
+.calc-sanctions-box {
+  margin-top: 7px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border-light);
   font-size: 11px;
+  color: #6b21a8;
 }
 
-.result-subject {
-  font-weight: 600;
-  color: var(--gray-700);
-}
-
-.result-amount {
-  font-weight: 700;
-  color: var(--danger-600);
-}
-
-.result-formula {
-  font-size: 10px;
-  color: var(--gray-600);
-}
-
-/* Steps Timeline */
 .steps-timeline {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  margin-top: 4px;
-}
-
-.timeline-item {
-  display: flex;
-  gap: 10px;
-}
-
-.timeline-badge {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: var(--purple-600);
-  color: #ffffff;
-  font-size: 10.5px;
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.timeline-body {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.timeline-rule-tag {
-  font-size: 9.5px;
-  font-weight: 700;
-  color: var(--purple-600);
-  text-transform: uppercase;
-}
-
-.timeline-text {
-  font-size: 11px;
-  color: var(--gray-800);
-  line-height: 1.4;
-}
-
-.timeline-basis {
-  font-size: 10px;
-  color: var(--gray-600);
-}
-
-/* Graph View Tab */
-.graph-banner {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  background: var(--purple-50);
-  border: 1px solid var(--purple-600);
-  border-radius: 8px;
-  padding: 10px 12px;
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--purple-600);
-}
-
-.neo4j-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  background: #ffffff;
-  color: var(--purple-600);
-  border: 1px solid var(--purple-600);
-  padding: 4px 8px;
-  border-radius: 6px;
-  text-decoration: none;
-  font-size: 10.5px;
-  font-weight: 700;
-}
-
-.nodes-container {
-  display: flex;
-  flex-direction: column;
   gap: 8px;
-  margin-top: 10px;
 }
 
-.graph-node-card {
-  padding: 10px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--gray-200);
+.step-item {
   background: #ffffff;
+  border: 1px solid var(--border-light);
+  border-left: 3px solid var(--accent-purple);
+  border-radius: 7px;
+  padding: 8px 10px;
 }
 
-.graph-node-card.type-legaldoc { border-left: 4px solid #2563eb; }
-.graph-node-card.type-article  { border-left: 4px solid #059669; }
-.graph-node-card.type-action   { border-left: 4px solid #d97706; }
-.graph-node-card.type-penalty  { border-left: 4px solid #dc2626; }
-.graph-node-card.type-sanction { border-left: 4px solid #9333ea; }
-
-.node-type-badge {
-  font-size: 9.5px;
-  font-weight: 700;
-  text-transform: uppercase;
-  color: var(--gray-600);
-  margin-bottom: 2px;
-}
-
-.node-label-text {
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--gray-900);
-}
-
-.edges-section {
-  margin-top: 12px;
-}
-
-.edges-title {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--gray-700);
-  margin-bottom: 8px;
-}
-
-.edges-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.edge-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.step-badge {
   font-size: 10px;
-  background: var(--gray-50);
-  padding: 6px 8px;
-  border-radius: 6px;
-  border: 1px solid var(--gray-200);
-  overflow-x: auto;
-}
-
-.edge-node {
-  font-weight: 600;
-  color: var(--gray-800);
-}
-
-.edge-rel {
-  color: var(--primary-600);
   font-weight: 700;
+  color: var(--accent-purple);
 }
 
-/* Sources Tab */
-.sources-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+.step-detail {
+  font-size: 11.5px;
+  color: var(--text-primary);
+  margin-top: 2px;
+}
+
+.step-basis {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  margin-top: 3px;
 }
 
 .source-card {
-  background: var(--gray-50);
-  border: 1px solid var(--gray-200);
-  border-radius: 8px;
-  padding: 12px;
+  background: #f8fafc;
+  border: 1px solid var(--border-light);
+  border-radius: 9px;
+  padding: 10px 12px;
 }
 
 .source-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  margin-bottom: 4px;
-}
-
-.source-title {
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 700;
-  color: var(--primary-600);
+  color: var(--accent-blue);
 }
 
 .source-page {
-  font-size: 10px;
-  color: var(--gray-600);
-  background: #ffffff;
-  padding: 2px 6px;
-  border-radius: 4px;
-  border: 1px solid var(--gray-200);
+  font-size: 10.5px;
+  color: var(--text-muted);
 }
 
 .source-article {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  color: var(--gray-800);
-  margin-bottom: 6px;
+  color: var(--text-primary);
+  margin-top: 3px;
 }
 
 .source-snippet {
-  font-size: 11px;
-  color: var(--gray-600);
-  line-height: 1.4;
-  margin: 0;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  margin: 5px 0 0 0;
+  line-height: 1.45;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 32px 16px;
+  color: var(--text-muted);
+}
+
+.empty-icon {
+  color: #cbd5e1;
+  margin-bottom: 8px;
+}
+
+.spin-icon {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* ==========================================================================
+   7. CHẾ ĐỘ NỀN TỐI (DARK MODE - PHONG CÁCH CHATGPT DARK #212121)
+   ========================================================================== */
+.chatgpt-app.dark-theme {
+  --bg-main: #212121;
+  --bg-subtle: #18181b;
+  --border-light: #303030;
+  --border-medium: #3f3f46;
+  --text-primary: #ececec;
+  --text-secondary: #d4d4d8;
+  --text-muted: #9ca3af;
+  --accent-blue: #60a5fa;
+  --accent-blue-soft: rgba(59, 130, 246, 0.16);
+  --accent-purple: #c084fc;
+  --accent-purple-soft: rgba(168, 85, 247, 0.16);
+  background: #212121;
+  color: #ececec;
+}
+
+.chatgpt-app.dark-theme .chatgpt-main {
+  background: #212121;
+}
+
+.chatgpt-app.dark-theme .chatgpt-topbar {
+  background: rgba(33, 33, 33, 0.92);
+  border-bottom-color: #2e2e2e;
+}
+
+.chatgpt-app.dark-theme .topbar-icon-btn,
+.chatgpt-app.dark-theme .topbar-pill-btn {
+  background: #2f2f2f;
+  border-color: #3f3f46;
+  color: #e4e4e7;
+}
+
+.chatgpt-app.dark-theme .topbar-icon-btn:hover,
+.chatgpt-app.dark-theme .topbar-pill-btn:hover,
+.chatgpt-app.dark-theme .model-selector-pill:hover {
+  background: #383838;
+  border-color: #52525b;
+}
+
+.chatgpt-app.dark-theme .topbar-pill-btn.active-ab {
+  background: rgba(37, 99, 235, 0.22);
+  color: #93c5fd;
+  border-color: #3b82f6;
+}
+
+.chatgpt-app.dark-theme .topbar-pill-btn.active-graph {
+  background: rgba(124, 58, 237, 0.22);
+  color: #d8b4fe;
+  border-color: #8b5cf6;
+}
+
+.chatgpt-app.dark-theme .theme-toggle-btn {
+  border-color: #f59e0b;
+  color: #fde68a;
+  background: rgba(245, 158, 11, 0.14);
+}
+
+.chatgpt-app.dark-theme .starter-card {
+  background: #2a2a2a;
+  border-color: #3a3a3a;
+}
+
+.chatgpt-app.dark-theme .starter-card:hover {
+  background: #323232;
+  border-color: #60a5fa;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+.chatgpt-app.dark-theme .chatgpt-user-bubble {
+  background: #2f2f2f;
+  color: #f4f4f5;
+  border-color: #3f3f46;
+}
+
+.chatgpt-app.dark-theme .markdown-prose {
+  color: #e4e4e7;
+}
+
+.chatgpt-app.dark-theme .markdown-prose strong {
+  color: #ffffff;
+}
+
+.chatgpt-app.dark-theme .markdown-prose code {
+  background: #2d2d30;
+  color: #93c5fd;
+}
+
+.chatgpt-app.dark-theme .msg-action-btn:hover {
+  background: #2f2f2f;
+  color: #ffffff;
+}
+
+.chatgpt-app.dark-theme .msg-action-chip.graph-chip {
+  background: rgba(37, 99, 235, 0.18);
+  border-color: rgba(96, 165, 250, 0.35);
+  color: #93c5fd;
+}
+
+.chatgpt-app.dark-theme .msg-action-chip.rule-chip {
+  background: rgba(124, 58, 237, 0.18);
+  border-color: rgba(192, 132, 252, 0.35);
+  color: #d8b4fe;
+}
+
+.chatgpt-app.dark-theme .comparison-card {
+  background: #282828;
+}
+
+.chatgpt-app.dark-theme .card-header {
+  border-bottom-color: #383838;
+}
+
+.chatgpt-app.dark-theme .chatgpt-loading-box {
+  background: #2a2a2a;
+  border-color: #3f3f46;
+}
+
+.chatgpt-app.dark-theme .chatgpt-composer-zone {
+  background: linear-gradient(180deg, rgba(33, 33, 33, 0) 0%, #212121 25%);
+}
+
+.chatgpt-app.dark-theme .chatgpt-composer-box {
+  background: #2f2f2f;
+  border-color: #424242;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.35);
+}
+
+.chatgpt-app.dark-theme .chatgpt-composer-box:focus-within {
+  background: #333333;
+  border-color: #60a5fa;
+}
+
+.chatgpt-app.dark-theme .composer-chip {
+  background: #262626;
+  border-color: #3f3f46;
+  color: #d4d4d8;
+}
+
+.chatgpt-app.dark-theme .composer-chip.active {
+  background: rgba(37, 99, 235, 0.22);
+  border-color: #60a5fa;
+  color: #93c5fd;
+}
+
+.chatgpt-app.dark-theme .chatgpt-send-btn {
+  background: #ececec;
+  color: #171717;
+}
+
+.chatgpt-app.dark-theme .chatgpt-send-btn:disabled {
+  background: #424242;
+  color: #71717a;
+}
+
+.chatgpt-app.dark-theme .symbolic-panel {
+  background: #18181b;
+  border-left-color: #2e2e2e;
+}
+
+.chatgpt-app.dark-theme .panel-header {
+  border-bottom-color: #27272a;
+}
+
+.chatgpt-app.dark-theme .panel-close-btn {
+  background: #27272a;
+  border-color: #3f3f46;
+  color: #d4d4d8;
+}
+
+.chatgpt-app.dark-theme .panel-tabs {
+  background: #121215;
+  border-bottom-color: #27272a;
+}
+
+.chatgpt-app.dark-theme .panel-tab.active {
+  background: #27272a;
+  color: #60a5fa;
+}
+
+.chatgpt-app.dark-theme .mode-pill {
+  background: #27272a;
+  border-color: #3f3f46;
+  color: #d4d4d8;
+}
+
+.chatgpt-app.dark-theme .graph3d-select,
+.chatgpt-app.dark-theme .graph3d-search-box {
+  background: #27272a;
+  border-color: #3f3f46;
+  color: #f4f4f5;
+}
+
+.chatgpt-app.dark-theme .guide-trigger-btn {
+  background: rgba(37, 99, 235, 0.18);
+  border-color: rgba(96, 165, 250, 0.35);
+  color: #93c5fd;
+}
+
+.chatgpt-app.dark-theme .graph3d-inspector,
+.chatgpt-app.dark-theme .card-box,
+.chatgpt-app.dark-theme .source-card {
+  background: #222226;
+  border-color: #34343a;
+}
+
+.chatgpt-app.dark-theme .calc-card,
+.chatgpt-app.dark-theme .step-item {
+  background: #18181b;
+  border-color: #34343a;
+}
+
+.chatgpt-app.dark-theme .calc-sanctions-box {
+  color: #d8b4fe;
+}
+
+.chatgpt-app.dark-theme .modal-card {
+  background: #1e1e22;
+  border-color: #34343a;
+}
+
+.chatgpt-app.dark-theme .modal-header,
+.chatgpt-app.dark-theme .conn-item {
+  background: #27272a;
+  border-color: #3f3f46;
+}
+
+.chatgpt-app.dark-theme .copy-mini-btn,
+.chatgpt-app.dark-theme .close-modal-secondary {
+  background: #18181b;
+  border-color: #3f3f46;
+  color: #e4e4e7;
+}
+
+.chatgpt-app.dark-theme .guide-alert {
+  background: rgba(30, 58, 138, 0.3);
+  border-color: rgba(96, 165, 250, 0.35);
+  color: #bfdbfe;
+}
+
+
+/* ==========================================================================
+   8. ĐỒNG BỘ GIAO DIỆN (UNIFIED POLISH) - Sáng & Tối nhất quán
+   ========================================================================== */
+.chatgpt-main {
+  background: var(--bg-main);
+  min-width: 0;
+}
+
+.chatgpt-topbar {
+  gap: 12px;
+  border-bottom: 1px solid var(--border-light);
+  background: color-mix(in srgb, var(--bg-main) 88%, transparent);
+}
+
+.topbar-left,
+.topbar-right {
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.model-selector-pill,
+.model-name,
+.model-version,
+.topbar-pill-btn,
+.theme-toggle-btn {
+  white-space: nowrap;
+}
+
+.topbar-pill-btn,
+.theme-toggle-btn {
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+/* Khi không đủ chỗ (mở panel 3D): rút gọn nhãn, giữ icon */
+@media (max-width: 1280px) {
+  .topbar-pill-btn span,
+  .theme-toggle-btn span,
+  .model-version {
+    display: none;
+  }
+  .topbar-pill-btn,
+  .theme-toggle-btn {
+    padding: 6px 10px;
+  }
+}
+
+/* Thẻ & khung nhập: cùng bán kính bo góc, bóng nhẹ đồng bộ */
+.starter-card,
+.chatgpt-composer-box,
+.comparison-card,
+.card-box,
+.source-card {
+  border-radius: 14px;
+}
+
+.starter-card {
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+}
+
+.starter-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px -8px rgba(37, 99, 235, 0.25);
+  border-color: var(--accent-blue);
+}
+
+.chatgpt-composer-box {
+  box-shadow: 0 4px 18px -6px rgba(15, 23, 42, 0.12);
+}
+
+.chatgpt-composer-box:focus-within {
+  border-color: var(--accent-blue);
+  box-shadow: 0 6px 24px -6px rgba(37, 99, 235, 0.28);
+}
+
+/* Panel Neo4j 3D bên phải: khớp màu theme */
+.symbolic-panel {
+  background: var(--bg-main);
+  border-left: 1px solid var(--border-light);
+}
+
+.panel-header {
+  background: var(--bg-subtle);
+  border-bottom: 1px solid var(--border-light);
+}
+
+/* Thanh cuộn đồng bộ toàn ứng dụng */
+.chatgpt-scroll-viewport::-webkit-scrollbar,
+.symbolic-panel *::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.chatgpt-scroll-viewport::-webkit-scrollbar-thumb,
+.symbolic-panel *::-webkit-scrollbar-thumb {
+  background: var(--border-medium);
+  border-radius: 8px;
+}
+
+.chatgpt-scroll-viewport::-webkit-scrollbar-thumb:hover,
+.symbolic-panel *::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* Focus rõ ràng cho truy cập bàn phím */
+button:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 2px;
+}
+
+/* Tinh chỉnh riêng nền tối cho phần mới */
+.chatgpt-app.dark-theme .chatgpt-topbar {
+  background: color-mix(in srgb, #212121 88%, transparent);
+}
+
+.chatgpt-app.dark-theme .panel-header {
+  background: #1b1b1b;
+}
+
+.chatgpt-app.dark-theme .new-chat-btn {
+  box-shadow: none;
+}
+
+.chatgpt-app.dark-theme .starter-card:hover {
+  box-shadow: 0 8px 20px -8px rgba(96, 165, 250, 0.35);
+}
+
+
+/* ==========================================================================
+   8. ĐỒNG BỘ GIAO DIỆN (UNIFIED POLISH) - Sáng & Tối nhất quán
+   ========================================================================== */
+.chatgpt-main {
+  background: var(--bg-main);
+  min-width: 0;
+}
+
+.chatgpt-topbar {
+  gap: 12px;
+  border-bottom: 1px solid var(--border-light);
+  background: color-mix(in srgb, var(--bg-main) 88%, transparent);
+}
+
+.topbar-left,
+.topbar-right {
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.model-selector-pill,
+.model-name,
+.model-version,
+.topbar-pill-btn,
+.theme-toggle-btn {
+  white-space: nowrap;
+}
+
+.topbar-pill-btn,
+.theme-toggle-btn {
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+/* Khi không đủ chỗ (mở panel 3D): rút gọn nhãn, giữ icon */
+@media (max-width: 1280px) {
+  .topbar-pill-btn span,
+  .theme-toggle-btn span,
+  .model-version {
+    display: none;
+  }
+  .topbar-pill-btn,
+  .theme-toggle-btn {
+    padding: 6px 10px;
+  }
+}
+
+/* Thẻ & khung nhập: cùng bán kính bo góc, bóng nhẹ đồng bộ */
+.starter-card,
+.chatgpt-composer-box,
+.comparison-card,
+.card-box,
+.source-card {
+  border-radius: 14px;
+}
+
+.starter-card {
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+}
+
+.starter-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px -8px rgba(37, 99, 235, 0.25);
+  border-color: var(--accent-blue);
+}
+
+.chatgpt-composer-box {
+  box-shadow: 0 4px 18px -6px rgba(15, 23, 42, 0.12);
+}
+
+.chatgpt-composer-box:focus-within {
+  border-color: var(--accent-blue);
+  box-shadow: 0 6px 24px -6px rgba(37, 99, 235, 0.28);
+}
+
+/* Panel Neo4j 3D bên phải: khớp màu theme */
+.symbolic-panel {
+  background: var(--bg-main);
+  border-left: 1px solid var(--border-light);
+}
+
+.panel-header {
+  background: var(--bg-subtle);
+  border-bottom: 1px solid var(--border-light);
+}
+
+/* Thanh cuộn đồng bộ toàn ứng dụng */
+.chatgpt-scroll-viewport::-webkit-scrollbar,
+.symbolic-panel *::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.chatgpt-scroll-viewport::-webkit-scrollbar-thumb,
+.symbolic-panel *::-webkit-scrollbar-thumb {
+  background: var(--border-medium);
+  border-radius: 8px;
+}
+
+.chatgpt-scroll-viewport::-webkit-scrollbar-thumb:hover,
+.symbolic-panel *::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* Focus rõ ràng cho truy cập bàn phím */
+button:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 2px;
+}
+
+/* Tinh chỉnh riêng nền tối cho phần mới */
+.chatgpt-app.dark-theme .chatgpt-topbar {
+  background: color-mix(in srgb, #212121 88%, transparent);
+}
+
+.chatgpt-app.dark-theme .panel-header {
+  background: #1b1b1b;
+}
+
+.chatgpt-app.dark-theme .new-chat-btn {
+  box-shadow: none;
+}
+
+.chatgpt-app.dark-theme .starter-card:hover {
+  box-shadow: 0 8px 20px -8px rgba(96, 165, 250, 0.35);
+}
 }

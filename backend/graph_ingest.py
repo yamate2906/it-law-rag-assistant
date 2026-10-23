@@ -31,12 +31,24 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Literal
+import warnings
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from config import DATA_DIR, NEO4J_DATABASE, create_llm, create_neo4j_driver, get_embeddings
-from legal_parser import Article, Clause, LegalDocument, clause_id, load_corpus
+from legal_parser import (
+    SUPPORTED_SUFFIXES,
+    Article,
+    Clause,
+    LegalDocument,
+    clause_id,
+    identify_document_by_name,
+    load_corpus,
+)
 from legal_rules import DECREE_RULES, INDIVIDUAL, ORGANIZATION
 
 EXTRACTOR_VERSION = "neo4j-v2"
@@ -270,8 +282,6 @@ SCHEMA_QUERIES = [
     "CREATE CONSTRAINT condition_key IF NOT EXISTS FOR (n:Condition) REQUIRE n.key IS UNIQUE",
     f"CREATE FULLTEXT INDEX {ACTION_FULLTEXT_INDEX} IF NOT EXISTS FOR (n:Action) ON EACH [n.name, n.text]",
     f"CREATE FULLTEXT INDEX {ARTICLE_FULLTEXT_INDEX} IF NOT EXISTS FOR (n:Article) ON EACH [n.title, n.text]",
-    f"CREATE VECTOR INDEX {ACTION_VECTOR_INDEX} IF NOT EXISTS FOR (n:Action) ON (n.embedding) "
-    f"OPTIONS {{indexConfig: {{`vector.dimensions`: {DEFAULT_EMBEDDING_DIM}, `vector.similarity_function`: 'cosine'}}}}",
 ]
 
 
@@ -721,6 +731,16 @@ def embed_actions(driver, batch_size: int = 80, priority_only: bool = False) -> 
         print(f"  {min(start + batch_size, len(rows))}/{len(rows)}")
 
     with driver.session(database=NEO4J_DATABASE) as session:
+        existing_idx = session.run(
+            "SHOW VECTOR INDEXES YIELD name, options WHERE name = $name",
+            name=ACTION_VECTOR_INDEX,
+        ).data()
+        if existing_idx:
+            cfg = (existing_idx[0].get("options") or {}).get("indexConfig") or {}
+            cur_dim = cfg.get("vector.dimensions")
+            if cur_dim and int(cur_dim) != int(dimensions):
+                session.run(f"DROP INDEX {ACTION_VECTOR_INDEX} IF EXISTS").consume()
+
         session.run(
             f"""
             CREATE VECTOR INDEX {ACTION_VECTOR_INDEX} IF NOT EXISTS
@@ -744,6 +764,36 @@ def print_stats(driver) -> None:
     print("  Cạnh: " + ", ".join(f"{r['type']}={r['n']}" for r in rels))
 
 
+def _get_ingested_graph_sources(driver, data_dir: Path) -> set[str]:
+    """Lấy danh sách các file trong data_dir đã được nạp vào Neo4j (theo d.sources hoặc d.code)."""
+    with driver.session(database=NEO4J_DATABASE) as session:
+        rows = session.run(
+            """
+            MATCH (d:LegalDoc)<-[:PART_OF]-(a:Article)
+            WITH d, collect(DISTINCT a.source) AS art_sources
+            RETURN d.code AS code, coalesce(d.sources, []) + art_sources AS sources
+            """
+        ).data()
+    ingested_sources: set[str] = set()
+    ingested_codes: set[str] = set()
+    for r in rows:
+        if r.get("code"):
+            ingested_codes.add(r["code"])
+        for src in r.get("sources") or []:
+            if src:
+                ingested_sources.add(Path(str(src)).name)
+
+    for path in sorted(data_dir.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in SUPPORTED_SUFFIXES:
+            continue
+        if path.name in ingested_sources:
+            continue
+        doc_info = identify_document_by_name(path.name)
+        if doc_info and doc_info["code"] in ingested_codes and "15-2020" not in path.name.lower():
+            ingested_sources.add(path.name)
+    return ingested_sources
+
+
 def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
@@ -753,12 +803,12 @@ def main() -> int:
     parser.add_argument("--no-llm", action="store_true", help="Chỉ dựng khung xương tất định")
     parser.add_argument("--skip-embeddings", action="store_true", help="Không nhúng hành vi")
     parser.add_argument("--priority-only", action="store_true", help="Chỉ nhúng Vector cho các Điều trọng tâm")
-    parser.add_argument("--force", action="store_true", help="Trích xuất LLM lại cả các Điều đã xong")
+    parser.add_argument("--force", action="store_true", help="Đọc và trích xuất lại cả các văn bản/Điều đã xong")
+    parser.add_argument("--file", type=str, default=None, help="Chỉ nạp 1 file cụ thể trong data/")
     parser.add_argument("--workers", type=int, default=4, help="Số luồng gọi LLM song song")
     parser.add_argument("--limit", type=int, default=None, help="Giới hạn số Điều gửi LLM (thử nghiệm)")
     args = parser.parse_args()
 
-    documents = load_corpus(DATA_DIR)
     driver = create_neo4j_driver()
     try:
         driver.verify_connectivity()
@@ -771,6 +821,15 @@ def main() -> int:
             reset_graph(driver)
         setup_schema(driver)
 
+        skip_sources: set[str] = set()
+        if not args.reset and not args.force:
+            skip_sources = _get_ingested_graph_sources(driver, DATA_DIR)
+            if skip_sources:
+                print(f"[SKIP] Bỏ qua {len(skip_sources)} file đã có trong Neo4j (dùng --force hoặc --reset nếu muốn nạp lại).")
+
+        only_sources = {Path(args.file).name} if args.file else None
+        documents = load_corpus(DATA_DIR, skip_sources=skip_sources, only_sources=only_sources)
+
         totals = {"clauses": 0, "actions": 0, "sanctions": 0}
         with driver.session(database=NEO4J_DATABASE) as session:
             for document in documents:
@@ -778,12 +837,15 @@ def main() -> int:
                     stats = session.execute_write(_write_skeleton, document, article)
                     for key in totals:
                         totals[key] += stats[key]
-        print(
-            f"[SKELETON] {sum(len(d.articles) for d in documents)} Điều, {totals['clauses']} Khoản, "
-            f"{totals['actions']} hành vi/quy phạm, {totals['sanctions']} biện pháp bổ sung/khắc phục."
-        )
+        if documents:
+            print(
+                f"[SKELETON] Đã nạp thêm {sum(len(d.articles) for d in documents)} Điều, {totals['clauses']} Khoản, "
+                f"{totals['actions']} hành vi/quy phạm, {totals['sanctions']} biện pháp bổ sung/khắc phục."
+            )
+        else:
+            print("[SKELETON] Không có file mới cần dựng khung xương.")
 
-        if not args.no_llm:
+        if not args.no_llm and documents:
             run_llm_enrichment(driver, documents, args.workers, args.force, args.limit)
         if not args.skip_embeddings:
             embed_actions(driver, priority_only=args.priority_only)

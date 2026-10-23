@@ -14,8 +14,16 @@ html, body, #root {
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
 }
 
-/* Ép thanh input không bị đen do chế độ Dark Mode của trình duyệt */
+/* Tự động đổi màu chữ input theo Light Mode / Dark Mode */
 input {
   background-color: transparent !important;
+  color: inherit;
+}
+
+html[data-theme="dark"] input {
+  color: #f4f4f5 !important;
+}
+
+html[data-theme="light"] input {
   color: #1f2937 !important;
 }
