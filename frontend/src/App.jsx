@@ -7,7 +7,8 @@ import {
   BookOpen, Network, RefreshCw, X, Plus, MessageSquare,
   Trash2, PanelLeftClose, PanelLeftOpen, Maximize2, Minimize2,
   Copy, Check, RotateCcw, ZoomIn, ZoomOut, Play, Pause, Search,
-  Database, Terminal, Layers, Sun, Moon
+  Database, Terminal, Layers, Sun, Moon, Paperclip, FileText,
+  BarChart3, Sliders, AlertTriangle, Printer
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import './App.css';
@@ -954,6 +955,401 @@ RETURN d, a, k, act, p LIMIT 120;`;
 }
 
 // ============================================================================
+// VŨ KHÍ 3: BẢNG ĐIỀU KHIỂN MÔ PHỎNG TÌNH HUỐNG PHÁP LÝ (INTERACTIVE WHAT-IF SANDBOX)
+// ============================================================================
+function formatVndClient(amount) {
+  if (amount == null) return '0 đồng';
+  return `${Math.round(amount).toLocaleString('vi-VN')} đồng`;
+}
+
+function WhatIfSandbox({ penaltyCalcs = [] }) {
+  const [simSubject, setSimSubject] = useState('INDIVIDUAL'); // 'ORGANIZATION' | 'INDIVIDUAL'
+  const [simAgeGroup, setSimAgeGroup] = useState('ADULT');    // 'ADULT' | '16_18' | '14_16' | 'UNDER_14'
+  const [simRecidivism, setSimRecidivism] = useState(false);
+
+  const primary = penaltyCalcs[0];
+  if (!primary) return null;
+
+  // Suy ra khung phạt gốc của Tổ chức (hoặc Cá nhân nếu là Điều 106)
+  const artNum = Number(primary.article_number || 101);
+  const isArt106 = artNum === 106;
+  let baseMin = primary.base_min;
+  let baseMax = primary.base_max;
+  if (baseMin == null || baseMax == null) {
+    const orgRow = primary.calculations?.find((c) => c.subject === 'ORGANIZATION' && c.min_amount);
+    const indRow = primary.calculations?.find((c) => c.subject === 'INDIVIDUAL' && c.min_amount);
+    if (orgRow) {
+      baseMin = orgRow.min_amount;
+      baseMax = orgRow.max_amount;
+    } else if (indRow) {
+      baseMin = isArt106 ? indRow.min_amount : indRow.min_amount * 2;
+      baseMax = isArt106 ? indRow.max_amount : indRow.max_amount * 2;
+    } else {
+      baseMin = 10000000;
+      baseMax = 20000000;
+    }
+  }
+
+  let simDisplay = '';
+  let simFormula = '';
+  let simBasis = 'Điều 4 Khoản 3 Nghị định 15/2020/NĐ-CP';
+
+  if (simRecidivism && primary.criminal_escalations?.length > 0) {
+    const ce = primary.criminal_escalations[0];
+    simDisplay = `Chuyển truy cứu Hình sự: ${ce.penalty}`;
+    simFormula = `Tái phạm / Gây hậu quả nghiêm trọng → ${ce.title}`;
+    simBasis = 'Bộ luật Hình sự 2015 (sửa đổi, bổ sung 2017 - 100/2015/QH13)';
+  } else if (simSubject === 'ORGANIZATION') {
+    if (isArt106) {
+      simDisplay = 'Không áp dụng cho Tổ chức (Điều 106 chỉ áp dụng đối với Cá nhân/Người chơi)';
+      simFormula = 'Ngoại lệ Điều 106 NĐ 15/2020';
+    } else {
+      simDisplay = `${formatVndClient(baseMin)} – ${formatVndClient(baseMax)}`;
+      simFormula = '100% khung phạt gốc áp dụng đối với Tổ chức';
+    }
+  } else {
+    // Chủ thể Cá nhân
+    const indMin = isArt106 ? baseMin : baseMin * 0.5;
+    const indMax = isArt106 ? baseMax : baseMax * 0.5;
+    if (simAgeGroup === 'UNDER_14') {
+      simDisplay = '0 đồng (Không xử phạt vi phạm hành chính)';
+      simFormula = 'Người dưới 14 tuổi chưa đủ tuổi chịu trách nhiệm VPHC';
+      simBasis = 'Điều 5 Khoản 1 Điểm a Luật Xử lý vi phạm hành chính';
+    } else if (simAgeGroup === '14_16') {
+      simDisplay = '0 đồng (Chỉ phạt Cảnh cáo, không áp dụng phạt tiền)';
+      simFormula = 'Người từ đủ 14 đến dưới 16 tuổi: Không phạt tiền';
+      simBasis = 'Điều 5 & Điều 22 Luật Xử lý vi phạm hành chính';
+    } else if (simAgeGroup === '16_18') {
+      simDisplay = `${formatVndClient(indMin * 0.5)} – ${formatVndClient(indMax * 0.5)}`;
+      simFormula = isArt106
+        ? '1/2 × mức phạt người thành niên (Điều 106)'
+        : '1/2 (Cá nhân) × 1/2 (Vị thành niên 16–<18 tuổi) = 1/4 mức Tổ chức';
+      simBasis = 'Điều 134 Khoản 3 Luật XLVPHC & Điều 4 K.3 NĐ 15/2020';
+    } else {
+      simDisplay = `${formatVndClient(indMin)} – ${formatVndClient(indMax)}`;
+      simFormula = isArt106
+        ? 'Áp dụng trực tiếp khung Cá nhân (Ngoại lệ Điều 106)'
+        : 'Cá nhân thành niên = 1/2 × mức phạt Tổ chức';
+    }
+  }
+
+  return (
+    <div className="card-box sandbox-box">
+      <div className="card-box-title">
+        <Sliders size={14} className="icon-purple" />
+        <span>Mô phỏng Tình huống Pháp lý (Symbolic What-If Sandbox)</span>
+      </div>
+      <p className="sandbox-sub">
+        Thay đổi biến số trực tiếp để kiểm chứng bộ suy luận toán học tất định (Rule Engine 0ms):
+      </p>
+
+      <div className="sandbox-controls">
+        <div className="sandbox-row">
+          <span className="sandbox-label">1. Chủ thể vi phạm:</span>
+          <div className="sandbox-pills">
+            <button
+              type="button"
+              className={`sandbox-pill ${simSubject === 'ORGANIZATION' ? 'active' : ''}`}
+              onClick={() => setSimSubject('ORGANIZATION')}
+            >
+              🏢 Tổ chức (1x)
+            </button>
+            <button
+              type="button"
+              className={`sandbox-pill ${simSubject === 'INDIVIDUAL' ? 'active' : ''}`}
+              onClick={() => setSimSubject('INDIVIDUAL')}
+            >
+              👤 Cá nhân (1/2x)
+            </button>
+          </div>
+        </div>
+
+        {simSubject === 'INDIVIDUAL' && (
+          <div className="sandbox-row">
+            <span className="sandbox-label">2. Độ tuổi chủ thể:</span>
+            <div className="sandbox-pills">
+              {[
+                { id: 'ADULT', label: '≥ 18 tuổi' },
+                { id: '16_18', label: '16 – <18 tuổi' },
+                { id: '14_16', label: '14 – <16 tuổi' },
+                { id: 'UNDER_14', label: '< 14 tuổi' },
+              ].map((g) => (
+                <button
+                  key={g.id}
+                  type="button"
+                  className={`sandbox-pill ${simAgeGroup === g.id ? 'active' : ''}`}
+                  onClick={() => setSimAgeGroup(g.id)}
+                >
+                  {g.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {primary.criminal_escalations?.length > 0 && (
+          <div className="sandbox-row">
+            <span className="sandbox-label">3. Mức độ & Hậu quả:</span>
+            <div className="sandbox-pills">
+              <button
+                type="button"
+                className={`sandbox-pill ${!simRecidivism ? 'active' : ''}`}
+                onClick={() => setSimRecidivism(false)}
+              >
+                Vi phạm Hành chính lần đầu
+              </button>
+              <button
+                type="button"
+                className={`sandbox-pill danger ${simRecidivism ? 'active' : ''}`}
+                onClick={() => setSimRecidivism(true)}
+              >
+                ⚠️ Tái phạm / Hậu quả nghiêm trọng (Hình sự)
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className={`sandbox-output ${simRecidivism ? 'criminal-mode' : ''}`}>
+        <div className="sandbox-result-main">{simDisplay}</div>
+        <div className="sandbox-result-meta">
+          <span><b>Công thức:</b> {simFormula}</span>
+          <span><b>Căn cứ:</b> {simBasis}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// VŨ KHÍ 4: XUẤT PHIẾU TƯ VẤN PHÁP LÝ / ĐƠN TRÌNH BÁO AN NINH MẠNG (PRINT/PDF)
+// ============================================================================
+function exportLegalAdvisoryReport(questionText, botMsg) {
+  const sym = botMsg?.symbolicData;
+  const calcs = sym?.reasoning?.penalty_calculations || [];
+  const sources = sym?.sources || [];
+  const nowStr = new Date().toLocaleString('vi-VN');
+
+  const calcRowsHtml = calcs
+    .map(
+      (c) => `
+      <div style="border:1px solid #cbd5e1;border-radius:8px;padding:12px;margin-bottom:10px;background:#f8fafc;">
+        <div style="font-weight:700;color:#0f172a;margin-bottom:4px;">Hành vi: ${c.action}</div>
+        <div style="font-size:12px;color:#2563eb;font-weight:600;margin-bottom:8px;">Căn cứ: ${c.clause}, ${c.article}</div>
+        ${(c.calculations || [])
+          .map(
+            (r) =>
+              `<div style="font-size:13px;margin:3px 0;">• <b>${r.subject_label}:</b> <span style="color:#dc2626;font-weight:700;">${r.display}</span> <i>(${r.formula})</i></div>`
+          )
+          .join('')}
+        ${
+          c.sanctions?.length
+            ? `<div style="font-size:12.5px;margin-top:6px;color:#475569;"><b>Biện pháp khắc phục hậu quả:</b> ${c.sanctions.join('; ')}</div>`
+            : ''
+        }
+        ${
+          c.criminal_escalations?.length
+            ? `<div style="font-size:12.5px;margin-top:6px;color:#991b1b;background:#fef2f2;padding:6px 8px;border-radius:6px;"><b>⚖️ Cảnh báo Chuyển hóa Hình sự (Multi-Hop):</b> ${c.criminal_escalations
+                .map((ce) => `${ce.title} — ${ce.penalty}`)
+                .join(' | ')}</div>`
+            : ''
+        }
+      </div>`
+    )
+    .join('');
+
+  const sourcesHtml = sources
+    .map(
+      (s) =>
+        `<li style="margin-bottom:6px;"><b>${s.title}</b> — ${s.article} (Trang ${s.page}): <i>"${s.snippet}"</i></li>`
+    )
+    .join('');
+
+  const html = `<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <title>Phiếu Tư vấn Pháp lý CNTT — LexIT Neuro-Symbolic</title>
+  <style>
+    body { font-family: "Times New Roman", Times, serif; color: #111827; max-width: 820px; margin: 28px auto; padding: 0 24px; line-height: 1.55; }
+    .header-table { width: 100%; border-collapse: collapse; margin-bottom: 18px; }
+    .header-table td { text-align: center; vertical-align: top; }
+    .report-title { text-align: center; font-size: 20px; font-weight: bold; text-transform: uppercase; margin: 18px 0 4px; color: #1e3a8a; }
+    .report-sub { text-align: center; font-size: 13px; font-style: italic; color: #4b5563; margin-bottom: 20px; }
+    .section-title { font-size: 15px; font-weight: bold; text-transform: uppercase; color: #1e3a8a; border-bottom: 1.5px solid #1e3a8a; padding-bottom: 4px; margin: 18px 0 10px; }
+    .box { background: #f9fafb; border: 1px solid #d1d5db; border-radius: 6px; padding: 12px 14px; font-size: 14px; white-space: pre-wrap; }
+    .print-bar { display: flex; justify-content: flex-end; gap: 10px; margin-bottom: 16px; font-family: sans-serif; }
+    .print-btn { background: #2563eb; color: #fff; border: none; border-radius: 6px; padding: 8px 16px; font-weight: 600; cursor: pointer; }
+    @media print { .print-bar { display: none; } body { margin: 0; } }
+  </style>
+</head>
+<body>
+  <div class="print-bar">
+    <button class="print-btn" onclick="window.print()">🖨️ In Phiếu Tư vấn / Lưu PDF</button>
+  </div>
+  <table class="header-table">
+    <tr>
+      <td style="width:45%;">
+        <b>HỆ THỐNG TRỢ LÝ ẢO PHÁP LUẬT LEX-IT</b><br/>
+        <span>Kiến trúc Neuro-Symbolic AI & Đồ thị Neo4j</span>
+      </td>
+      <td style="width:55%;">
+        <b>CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM</b><br/>
+        <b>Độc lập - Tự do - Hạnh phúc</b><br/>
+        <span>───────────────</span>
+      </td>
+    </tr>
+  </table>
+  <div class="report-title">PHIẾU TƯ VẤN PHÁP LUẬT CÔNG NGHỆ THÔNG TIN & AN NINH MẠNG</div>
+  <div class="report-sub">Thời điểm trích xuất: ${nowStr} • Mã kiểm chứng: Symbolic-Rule-Engine-v2.2</div>
+
+  <div class="section-title">I. NỘI DUNG TÌNH HUỐNG / YÊU CẦU TƯ VẤN</div>
+  <div class="box">${(questionText || 'Tư vấn pháp luật CNTT').replace(/</g, '&lt;')}</div>
+
+  ${
+    calcRowsHtml
+      ? `<div class="section-title">II. BẢNG TÍNH KHUNG HÌNH PHẠT & CHẾ TÀI TẤT ĐỊNH (SYMBOLIC ENGINE)</div>${calcRowsHtml}`
+      : ''
+  }
+
+  <div class="section-title">III. Ý KIẾN TƯ VẤN PHÁP LÝ CHI TIẾT</div>
+  <div class="box">${(botMsg?.text || '').replace(/</g, '&lt;')}</div>
+
+  ${
+    sourcesHtml
+      ? `<div class="section-title">IV. CĂN CỨ VĂN BẢN QUY PHẠM PHÁP LUẬT TRÍCH DẪN (PGVECTOR & NEO4J)</div><ul style="font-size:13.5px;padding-left:20px;">${sourcesHtml}</ul>`
+      : ''
+  }
+
+  <div style="margin-top:26px;font-size:12.5px;color:#4b5563;border-top:1px dashed #cbd5e1;padding-top:10px;">
+    <b>Hướng dẫn trình báo khi bị xâm phạm quyền và lợi ích hợp pháp trên không gian mạng:</b><br/>
+    1. Lưu giữ nguyên trạng bằng chứng điện tử (ảnh chụp màn hình kèm URL, thời gian, sao kê giao dịch, hợp đồng điện tử).<br/>
+    2. Nộp đơn trình báo kèm Phiếu tư vấn này tới Phòng An ninh mạng và phòng, chống tội phạm sử dụng công nghệ cao (PA05 - Công an tỉnh/thành phố) hoặc Cơ quan điều tra nơi cư trú.
+  </div>
+</body>
+</html>`;
+
+  const win = window.open('', '_blank', 'width=900,height=800');
+  if (win) {
+    win.document.write(html);
+    win.document.close();
+  }
+}
+
+// ============================================================================
+// VŨ KHÍ 5: MODAL BẢNG THỰC NGHIỆM ĐỊNH LƯỢNG TRỰC TIẾP (LIVE BENCHMARK MODAL)
+// ============================================================================
+function BenchmarkModal({ isOpen, onClose, data, isLoading, onRunBenchmark }) {
+  if (!isOpen) return null;
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-card benchmark-modal-card" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div className="modal-icon">
+              <BarChart3 size={18} />
+            </div>
+            <div>
+              <h3>Thực nghiệm Đối chứng: Naive Vector RAG vs. Neuro-Symbolic Hybrid RAG</h3>
+              <p>
+                Đánh giá định lượng tự động trên <b>{data?.total_cases || 8} kịch bản kiểm thử học thuật</b> (Chương 4 Đồ án)
+              </p>
+            </div>
+          </div>
+          <button type="button" onClick={onClose} className="modal-close-btn">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="modal-body">
+          {isLoading ? (
+            <div className="benchmark-loading">
+              <Loader2 size={24} className="spin-icon" />
+              <span>Đang thực thi bộ kiểm thử định lượng qua 8 kịch bản pháp lý...</span>
+            </div>
+          ) : data ? (
+            <>
+              <div className="benchmark-metrics-grid">
+                {(data.metrics || []).map((m, idx) => (
+                  <div key={idx} className="bench-metric-card">
+                    <div className="bench-metric-title">{m.name}</div>
+                    <div className="bench-bars">
+                      <div className="bench-bar-row">
+                        <span className="bench-bar-label">Naive RAG:</span>
+                        <div className="bench-bar-track">
+                          <div className="bench-bar-fill naive" style={{ width: `${m.naive}%` }} />
+                        </div>
+                        <span className="bench-bar-val">{m.naive}%</span>
+                      </div>
+                      <div className="bench-bar-row">
+                        <span className="bench-bar-label">Neuro-Symbolic:</span>
+                        <div className="bench-bar-track">
+                          <div className="bench-bar-fill hybrid" style={{ width: `${m.hybrid}%` }} />
+                        </div>
+                        <span className="bench-bar-val highlight">{m.hybrid}%</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="bench-table-wrap">
+                <table className="bench-table">
+                  <thead>
+                    <tr>
+                      <th>Mã Ca</th>
+                      <th>Kịch bản Kiểm thử Pháp lý</th>
+                      <th>Trích dẫn (Naive / Hybrid)</th>
+                      <th>Mức phạt & Tuổi (Naive / Hybrid)</th>
+                      <th>Chủ thể & Guardrail (Naive / Hybrid)</th>
+                      <th>Tốc độ</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(data.cases || []).map((c) => (
+                      <tr key={c.id}>
+                        <td><b>{c.id}</b></td>
+                        <td>{c.category}</td>
+                        <td className="center-cell">
+                          {c.n_citation ? '✅' : '❌'} / <b>{c.h_citation ? '✅' : '❌'}</b>
+                        </td>
+                        <td className="center-cell">
+                          {c.n_fine_age ? '✅' : '❌'} / <b>{c.h_fine_age ? '✅' : '❌'}</b>
+                        </td>
+                        <td className="center-cell">
+                          {c.n_subject_guardrail ? '✅' : '❌'} / <b>{c.h_subject_guardrail ? '✅' : '❌'}</b>
+                        </td>
+                        <td className="center-cell">{c.elapsed_seconds}s</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          ) : null}
+
+          <div className="modal-actions" style={{ justifyContent: 'space-between', marginTop: '14px' }}>
+            <button
+              type="button"
+              className="open-neo4j-web-btn"
+              onClick={() => onRunBenchmark(false)}
+              disabled={isLoading}
+            >
+              <RefreshCw size={14} />
+              <span>Chạy lại Kiểm định Symbolic tức thì</span>
+            </button>
+            <button type="button" onClick={onClose} className="close-modal-secondary">
+              Đóng bảng
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
 // MAIN APP: GIAO DIỆN PHONG CÁCH CHATGPT HIỆN ĐẠI + SIDEBAR LỊCH SỬ + 3D GRAPH
 // ============================================================================
 function App() {
@@ -1012,6 +1408,16 @@ function App() {
   const [currentSymbolicData, setCurrentSymbolicData] = useState(null);
   const [copiedMsgIdx, setCopiedMsgIdx] = useState(null);
   const [showNeo4jModal, setShowNeo4jModal] = useState(false);
+
+  // Vũ khí 1: Bằng chứng Ảnh chụp màn hình / PDF đính kèm (OCR & Vision Evidence)
+  const [evidenceAttachment, setEvidenceAttachment] = useState(null);
+  const [isUploadingEvidence, setIsUploadingEvidence] = useState(false);
+  const evidenceInputRef = useRef(null);
+
+  // Vũ khí 5: Bảng Thực nghiệm Định lượng Trực tiếp (Live Benchmark Modal)
+  const [showBenchmarkModal, setShowBenchmarkModal] = useState(false);
+  const [benchmarkData, setBenchmarkData] = useState(null);
+  const [isLoadingBenchmark, setIsLoadingBenchmark] = useState(false);
 
   // Dữ liệu Đồ thị Neo4j 3D trực tiếp từ Backend
   const [liveGraphData, setLiveGraphData] = useState({ nodes: [], edges: [] });
@@ -1154,10 +1560,63 @@ function App() {
     });
   };
 
+  // Vũ khí 1: Xử lý tải lên ảnh chụp màn hình / PDF bằng chứng để OCR tự động
+  const handleEvidenceUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    setIsUploadingEvidence(true);
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const resultStr = String(reader.result || '');
+        const base64Part = resultStr.includes(',') ? resultStr.split(',')[1] : resultStr;
+        const res = await axios.post(`${API_BASE_URL}/analyze-evidence`, {
+          filename: file.name,
+          content_base64: base64Part,
+        });
+        setEvidenceAttachment(res.data);
+      } catch (err) {
+        console.error('Lỗi phân tích bằng chứng:', err);
+        setEvidenceAttachment({
+          filename: file.name,
+          char_count: 0,
+          extracted_text: `[Bằng chứng đính kèm: ${file.name}]`,
+        });
+      } finally {
+        setIsUploadingEvidence(false);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Vũ khí 5: Mở & chạy Bảng Thực nghiệm Định lượng (Benchmark)
+  const handleRunBenchmark = useCallback(async (live = false) => {
+    setShowBenchmarkModal(true);
+    setIsLoadingBenchmark(true);
+    try {
+      const res = await axios.get(`${API_BASE_URL}/benchmark/run`, { params: { live } });
+      setBenchmarkData(res.data);
+    } catch (err) {
+      console.error('Lỗi chạy benchmark:', err);
+    } finally {
+      setIsLoadingBenchmark(false);
+    }
+  }, []);
+
   // Gửi câu hỏi với luồng Streaming thời gian thực (hiển thị Đồ thị 3D < 0.2s & stream chữ tức thì)
   const sendMessage = async (questionText) => {
-    const textToSend = (questionText ?? input).trim();
-    if (!textToSend || isLoading) return;
+    const rawTyped = (questionText ?? input).trim();
+    if ((!rawTyped && !evidenceAttachment) || isLoading) return;
+
+    const textToSend = evidenceAttachment
+      ? `[BẰNG CHỨNG ĐÍNH KÈM: ${evidenceAttachment.filename}]\nNội dung trích xuất OCR: "${evidenceAttachment.extracted_text.slice(0, 1200)}"\n\nCâu hỏi tư vấn: ${rawTyped || 'Hãy phân tích hành vi vi phạm pháp luật trong bằng chứng trên và tính mức xử phạt.'}`
+      : rawTyped;
+
+    const displayUserText = evidenceAttachment
+      ? `📎 [Bằng chứng: ${evidenceAttachment.filename}]\n${rawTyped || 'Phân tích hành vi vi phạm và tính mức phạt từ bằng chứng đính kèm.'}`
+      : rawTyped;
 
     abortControllerRef.current?.abort();
     const controller = new AbortController();
@@ -1169,10 +1628,10 @@ function App() {
       .slice(-4)
       .map((m) => ({ role: m.role, text: m.text }));
 
-    const userMessage = { role: 'user', text: textToSend };
+    const userMessage = { role: 'user', text: displayUserText };
     const updatedTitle =
       messages.length === 0
-        ? textToSend.slice(0, 38) + (textToSend.length > 38 ? '…' : '')
+        ? displayUserText.slice(0, 38) + (displayUserText.length > 38 ? '…' : '')
         : activeConversation.title;
 
     const botMsgId = `bot-${Date.now()}`;
@@ -1199,6 +1658,7 @@ function App() {
     );
 
     if (!questionText) setInput('');
+    setEvidenceAttachment(null);
     setIsLoading(true);
 
     try {
@@ -1532,6 +1992,17 @@ function App() {
               <span>{theme === 'dark' ? 'Nền sáng' : 'Nền tối'}</span>
             </button>
 
+            {/* Nút Bảng Thực nghiệm Định lượng (Vũ khí 5) */}
+            <button
+              type="button"
+              className="topbar-pill-btn benchmark-trigger-btn"
+              onClick={() => handleRunBenchmark(false)}
+              title="Mở Bảng Thực nghiệm Đối chứng Naive RAG vs. Neuro-Symbolic RAG (100% Accuracy)"
+            >
+              <BarChart3 size={15} />
+              <span>Thực nghiệm (100%)</span>
+            </button>
+
             {/* Nút bật/tắt So sánh Đối chứng A/B */}
             <button
               type="button"
@@ -1667,6 +2138,21 @@ function App() {
                             <span>{copiedMsgIdx === index ? 'Đã chép' : 'Sao chép'}</span>
                           </button>
 
+                          <button
+                            type="button"
+                            className="msg-action-btn report-export-btn"
+                            onClick={() =>
+                              exportLegalAdvisoryReport(
+                                index > 0 ? messages[index - 1]?.text : '',
+                                msg
+                              )
+                            }
+                            title="Xuất Phiếu Tư vấn Pháp lý / Đơn trình báo chuẩn mẫu (In / PDF)"
+                          >
+                            <FileText size={14} />
+                            <span>Xuất Phiếu Tư vấn</span>
+                          </button>
+
                           {msg.symbolicData && (
                             <>
                               <button
@@ -1713,8 +2199,15 @@ function App() {
           )}
         </div>
 
-        {/* Ô nhập câu hỏi nổi ở đáy phong cách ChatGPT (đã xóa dòng chữ khoanh đỏ phía dưới) */}
+        {/* Ô nhập câu hỏi nổi ở đáy phong cách ChatGPT */}
         <div className="chatgpt-composer-zone">
+          <input
+            ref={evidenceInputRef}
+            type="file"
+            accept=".png,.jpg,.jpeg,.webp,.bmp,.pdf,.docx,.txt,.md"
+            style={{ display: 'none' }}
+            onChange={handleEvidenceUpload}
+          />
           <form
             className="chatgpt-composer-box"
             onSubmit={(e) => {
@@ -1722,18 +2215,57 @@ function App() {
               sendMessage();
             }}
           >
+            {evidenceAttachment && (
+              <div className="evidence-attachment-banner">
+                <div className="evidence-banner-left">
+                  <Paperclip size={14} className="evidence-icon" />
+                  <div className="evidence-info">
+                    <span className="evidence-name">
+                      Bằng chứng: <b>{evidenceAttachment.filename}</b> ({evidenceAttachment.char_count} ký tự OCR)
+                    </span>
+                    <span className="evidence-preview">
+                      {evidenceAttachment.extracted_text.slice(0, 140)}...
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="evidence-remove-btn"
+                  onClick={() => setEvidenceAttachment(null)}
+                  title="Gỡ bằng chứng đính kèm"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            )}
             <textarea
               ref={textareaRef}
               rows={1}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Hỏi bất kỳ quy định, mức xử phạt, điều khoản nào về Luật CNTT, An ninh mạng, Dữ liệu cá nhân..."
+              placeholder="Hỏi bất kỳ quy định, mức xử phạt, hoặc đính kèm ảnh chụp bằng chứng / PDF..."
               disabled={isLoading}
               className="chatgpt-textarea"
             />
             <div className="composer-bottom-row">
               <div className="composer-tags">
+                <button
+                  type="button"
+                  className={`composer-chip ${evidenceAttachment ? 'active' : ''}`}
+                  onClick={() => evidenceInputRef.current?.click()}
+                  disabled={isUploadingEvidence || isLoading}
+                  title="Đính kèm ảnh chụp màn hình tin nhắn/bài đăng vi phạm hoặc hợp đồng PDF/DOCX để OCR tự động"
+                >
+                  {isUploadingEvidence ? <Loader2 size={13} className="spin-icon" /> : <Paperclip size={13} />}
+                  <span>
+                    {isUploadingEvidence
+                      ? 'Đang OCR bằng chứng...'
+                      : evidenceAttachment
+                      ? 'Đã đính kèm Bằng chứng'
+                      : 'Đính kèm Bằng chứng (Ảnh/PDF)'}
+                  </span>
+                </button>
                 <button
                   type="button"
                   className={`composer-chip ${showSymbolicPanel && activeTab === 'graph' ? 'active' : ''}`}
@@ -1757,7 +2289,7 @@ function App() {
 
               <button
                 type="submit"
-                disabled={isLoading || !input.trim()}
+                disabled={isLoading || (!input.trim() && !evidenceAttachment)}
                 className="chatgpt-send-btn"
                 title="Gửi câu hỏi (Enter)"
               >
@@ -1946,10 +2478,27 @@ function App() {
                                 ))}
                               </div>
                             )}
+                            {calc.criminal_escalations?.length > 0 && (
+                              <div className="calc-criminal-box">
+                                <b>⚖️ Liên đới Trách nhiệm Hình sự (Multi-Hop 3 Tầng → BLHS 2015):</b>
+                                {calc.criminal_escalations.map((ce, idx) => (
+                                  <div key={idx} className="criminal-item">
+                                    <div>• <b>{ce.title}</b></div>
+                                    <div className="criminal-sub">Điều kiện: {ce.condition}</div>
+                                    <div className="criminal-pen">Khung hình phạt: {ce.penalty}</div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>
                     </div>
+                  )}
+
+                  {/* Vũ khí 3: Bảng điều khiển Mô phỏng Tình huống Pháp lý (Interactive What-If Sandbox) */}
+                  {activeSymbolic.reasoning?.penalty_calculations?.length > 0 && (
+                    <WhatIfSandbox penaltyCalcs={activeSymbolic.reasoning.penalty_calculations} />
                   )}
 
                   <div className="card-box">
@@ -2012,6 +2561,15 @@ function App() {
         isOpen={showNeo4jModal}
         onClose={() => setShowNeo4jModal(false)}
         stats={neo4jStats}
+      />
+
+      {/* Vũ khí 5: Modal Bảng Thực nghiệm Định lượng Trực tiếp */}
+      <BenchmarkModal
+        isOpen={showBenchmarkModal}
+        onClose={() => setShowBenchmarkModal(false)}
+        data={benchmarkData}
+        isLoading={isLoadingBenchmark}
+        onRunBenchmark={handleRunBenchmark}
       />
     </div>
   );

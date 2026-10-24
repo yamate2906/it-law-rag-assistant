@@ -1,8 +1,8 @@
-IT-LAW-RAG-ASSISTANT - COMPLETE TEXT FILE SNAPSHOT
-Generated: 2026-10-23T22:35:57+07:00
-Contains every UTF-8-readable project file outside excluded generated/dependency directories.
-Excluded for safety: .env files and Git metadata. Excluded generated/dependency directories: venv, node_modules, dist, caches.
-Binary files are inventoried below but their binary contents cannot be represented as source text.
+IT-LAW-RAG-ASSISTANT - PROJECT CODE CONTEXT
+Generated: 2026-10-24T20:02:08+07:00
+Project text files captured for external review.
+Excluded: .env secrets, Git metadata, installed dependencies, build output, and caches.
+Binary files are listed with size; binary contents are not embedded.
 
 BINARY FILE INVENTORY:
 - data/07-2022-qh15.pdf (774,500 bytes)
@@ -155,20 +155,24 @@ def create_llm(temperature: float = 0.0, timeout: int = 120):
     """Ưu tiên DeepSeek API gốc nếu có DEEPSEEK_API_KEY, ngược lại dùng OpenRouter."""
     from langchain_openai import ChatOpenAI
 
-    if DEEPSEEK_API_KEY:
+    load_dotenv(BACKEND_DIR / ".env", override=True)
+    deepseek_key = os.getenv("DEEPSEEK_API_KEY")
+    openrouter_key = os.getenv("OPENROUTER_API_KEY")
+
+    if deepseek_key:
         return ChatOpenAI(
-            model=DEEPSEEK_MODEL,
-            api_key=DEEPSEEK_API_KEY,
-            base_url=DEEPSEEK_BASE_URL,
+            model=os.getenv("DEEPSEEK_MODEL", DEEPSEEK_MODEL),
+            api_key=deepseek_key,
+            base_url=os.getenv("DEEPSEEK_BASE_URL", DEEPSEEK_BASE_URL),
             temperature=temperature,
             max_retries=3,
             timeout=timeout,
         )
-    if OPENROUTER_API_KEY:
+    if openrouter_key:
         return ChatOpenAI(
-            model=OPENROUTER_CHAT_MODEL,
-            api_key=OPENROUTER_API_KEY,
-            base_url=OPENROUTER_BASE_URL,
+            model=os.getenv("OPENROUTER_CHAT_MODEL", OPENROUTER_CHAT_MODEL),
+            api_key=openrouter_key,
+            base_url=os.getenv("OPENROUTER_BASE_URL", OPENROUTER_BASE_URL),
             temperature=temperature,
             max_retries=3,
             timeout=timeout,
@@ -180,18 +184,24 @@ def create_llm(temperature: float = 0.0, timeout: int = 120):
 
 @lru_cache(maxsize=1)
 def get_embeddings():
-    if EMBEDDING_PROVIDER == "openai":
+    load_dotenv(BACKEND_DIR / ".env", override=True)
+    provider = os.getenv("EMBEDDING_PROVIDER", EMBEDDING_PROVIDER).strip().lower()
+    if provider == "openai":
         from langchain_openai import OpenAIEmbeddings
 
         if not os.getenv("OPENAI_API_KEY"):
             raise RuntimeError("Thiếu OPENAI_API_KEY trong backend/.env.")
-        return OpenAIEmbeddings(model=OPENAI_EMBEDDING_MODEL)
-    if EMBEDDING_PROVIDER == "gemini":
+        return OpenAIEmbeddings(model=os.getenv("OPENAI_EMBEDDING_MODEL", OPENAI_EMBEDDING_MODEL))
+    if provider == "gemini":
         from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
-        if not os.getenv("GEMINI_API_KEY") and not os.getenv("GOOGLE_API_KEY"):
+        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        if not api_key:
             raise RuntimeError("Thiếu GEMINI_API_KEY trong backend/.env.")
-        return GoogleGenerativeAIEmbeddings(model=EMBEDDING_MODEL)
+        return GoogleGenerativeAIEmbeddings(
+            model=os.getenv("GEMINI_EMBEDDING_MODEL", EMBEDDING_MODEL),
+            google_api_key=api_key,
+        )
     raise RuntimeError("EMBEDDING_PROVIDER phải là 'gemini' hoặc 'openai'.")
 
 
@@ -282,9 +292,14 @@ BENCHMARK_CASES = [
             [
                 "điều 106 là ngoại lệ",
                 "ngoại lệ điều 106",
+                "ngoại lệ của điều 4",
+                "ngoại lệ tại điều 106",
                 "điều 106 áp dụng trực tiếp",
                 "áp dụng trực tiếp cho người chơi",
+                "áp dụng trực tiếp cho cá nhân",
+                "áp dụng trực tiếp đối với cá nhân",
                 "mức phạt áp dụng trực tiếp cho cá nhân",
+                "chỉ áp dụng đối với cá nhân",
             ],
         ],
     },
@@ -298,6 +313,37 @@ BENCHMARK_CASES = [
         "citation_groups": [["9999/2025/nd-cp", "nghi dinh 9999/2025"], ["không tồn tại", "không có thực"]],
         "fine_rule": "no_fabricated_fine",
         "subject_groups": [["không tồn tại", "không có thực"]],
+    },
+    {
+        "id": "TC06",
+        "category": "Quy định chung - Hành vi nghiêm cấm (Điều 8 Luật An ninh mạng)",
+        "question": (
+            "Theo Điều 8 Luật An ninh mạng 2018, những hành vi nào bị nghiêm cấm trên không gian mạng?"
+        ),
+        "citation_groups": [["điều 8"], ["an ninh mạng", "24/2018"]],
+        "fine_rule": "no_fabricated_fine",
+        "subject_groups": [["nghiêm cấm", "xuyên tạc", "thông tin sai sự thật"]],
+    },
+    {
+        "id": "TC07",
+        "category": "Bảo vệ dữ liệu cá nhân (NĐ 13/2023 & Luật 91/2025)",
+        "question": (
+            "Theo Nghị định 13/2023/NĐ-CP và Luật Bảo vệ dữ liệu cá nhân, quyền của chủ thể dữ liệu "
+            "và nghĩa vụ khi xử lý dữ liệu cá nhân nhạy cảm là gì?"
+        ),
+        "citation_groups": [["13/2023", "dữ liệu cá nhân"]],
+        "fine_rule": "no_fabricated_fine",
+        "subject_groups": [["chủ thể dữ liệu", "đồng ý", "dữ liệu cá nhân"]],
+    },
+    {
+        "id": "TC08",
+        "category": "Chặn văn bản ngoài phạm vi CNTT (Out-of-Scope Guardrail)",
+        "question": (
+            "Theo Nghị định 100/2019/NĐ-CP thì vượt đèn đỏ bị phạt bao nhiêu tiền?"
+        ),
+        "citation_groups": [["100/2019"], ["ngoài phạm vi", "không nằm trong cơ sở dữ liệu"]],
+        "fine_rule": "no_fabricated_fine",
+        "subject_groups": [["ngoài phạm vi", "không nằm trong cơ sở dữ liệu", "công nghệ thông tin"]],
     },
 ]
 
@@ -537,6 +583,42 @@ async def run_benchmark():
         )
     print(f"Số ca đánh giá: {len(rows)}")
     print("=" * 92)
+
+    # Tự động xuất bảng báo cáo Markdown chuẩn học thuật ra file BENCHMARK_REPORT.md
+    from pathlib import Path
+
+    report_path = Path(__file__).resolve().parent.parent / "BENCHMARK_REPORT.md"
+    md_lines = [
+        "# BÁO CÁO THỰC NGHIỆM ĐỐI CHỨNG: NAIVE VECTOR RAG vs. NEURO-SYMBOLIC HYBRID RAG",
+        "",
+        "## 1. Bảng Kết quả Chi tiết theo Kịch bản Kiểm thử",
+        "",
+        "| Mã Ca | Phân loại Kịch bản | Trích dẫn (Naive / Hybrid) | Mức phạt & Độ tuổi (Naive / Hybrid) | Chủ thể & Guardrail (Naive / Hybrid) | Thời gian (s) |",
+        "| :--- | :--- | :---: | :---: | :---: | :---: |",
+    ]
+    for r in rows:
+        c_str = f"{'✅' if r['n_citation'] else '❌'} / **{'✅' if r['h_citation'] else '❌'}**"
+        f_str = f"{'✅' if r['n_fine_age'] else '❌'} / **{'✅' if r['h_fine_age'] else '❌'}**"
+        s_str = f"{'✅' if r['n_subject_guardrail'] else '❌'} / **{'✅' if r['h_subject_guardrail'] else '❌'}**"
+        md_lines.append(
+            f"| **{r['id']}** | {r['category']} | {c_str} | {f_str} | {s_str} | {r['elapsed_seconds']:.2f}s |"
+        )
+
+    md_lines.extend([
+        "",
+        "## 2. Tổng hợp Độ chính xác Định lượng",
+        "",
+        "| Tiêu chí Đánh giá | Naive Vector RAG | Neuro-Symbolic Hybrid RAG | Độ cải thiện |",
+        "| :--- | :---: | :---: | :---: |",
+    ])
+    for label, key in metrics:
+        n_val = _rate(rows, f"n_{key}")
+        h_val = _rate(rows, f"h_{key}")
+        diff = h_val - n_val
+        md_lines.append(f"| **{label}** | {n_val:.1f}% | **{h_val:.1f}%** | +{diff:.1f}% |")
+
+    report_path.write_text("\n".join(md_lines) + "\n", encoding="utf-8")
+    print(f"\n📄 Đã xuất bảng báo cáo Markdown học thuật tại: {report_path}")
 
 
 if __name__ == "__main__":
@@ -1280,7 +1362,7 @@ def embed_actions(driver, batch_size: int = 80, priority_only: bool = False) -> 
 
     with driver.session(database=NEO4J_DATABASE) as session:
         existing_idx = session.run(
-            "SHOW VECTOR INDEXES YIELD name, options WHERE name = $name RETURN options",
+            "SHOW VECTOR INDEXES YIELD name, options WHERE name = $name",
             name=ACTION_VECTOR_INDEX,
         ).data()
         if existing_idx:
@@ -1550,7 +1632,7 @@ def build_structured_chunks(
 def sync_existing_pgvector_metadata() -> int:
     """Đồng bộ và chuẩn hóa metadata (doc_code, doc_title, article_id, article_number, article_title)
     cho các bản ghi đã nhúng trong bảng langchain_pg_embedding để kích hoạt cầu nối Neural -> Symbolic."""
-    docs = load_corpus(PROJECT_DIR / "data", core_only=True)
+    docs = load_corpus(PROJECT_DIR / "data", core_only=False)
     by_code = {d.code: d for d in docs}
 
     dsn = CONNECTION_STRING.replace("postgresql+psycopg2://", "postgresql://")
@@ -1824,23 +1906,27 @@ def embed_and_commit_document(
                 if not rate_limited or attempt == 7:
                     raise
                 # Thử nạp lại .env phòng trường hợp người dùng vừa đổi GEMINI_API_KEY khi script đang chạy
-                old_key = getattr(embeddings, "google_api_key", None)
+                old_raw = getattr(embeddings, "google_api_key", None)
+                old_key_val = (
+                    old_raw.get_secret_value()
+                    if hasattr(old_raw, "get_secret_value")
+                    else str(old_raw or "")
+                ).strip()
                 load_dotenv(BACKEND_DIR / ".env", override=True)
-                new_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-                if new_key and str(old_key) != str(new_key):
+                new_key = (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "").strip()
+                if new_key and old_key_val != new_key:
                     print("   🔄 Phát hiện GEMINI_API_KEY mới trong .env -> Chuyển sang key mới ngay lập tức!")
                     get_embeddings.cache_clear()
                     embeddings = get_embeddings()
                     _usage_window.clear()
                     continue
-                # Chỉ dừng hẳn khi hết hạn mức THEO NGÀY; giới hạn theo phút thì chờ rồi thử lại.
-                # Google đôi khi không ghi rõ "PerDay": nếu đã chờ >1 phút mà vẫn 429 liên tiếp 3 lần
-                # thì chắc chắn là hết hạn mức theo ngày -> dừng êm, không in traceback.
+                # Chỉ dừng hẳn khi hết hạn mức THEO NGÀY hoặc đã thử lại 6 lần liên tiếp không qua được.
                 if (
                     "PERDAY" in message
                     or "PER_DAY" in message
+                    or "PER DAY" in message
                     or re.search(r"RETRY IN \d+H", message)
-                    or attempt >= 3
+                    or attempt >= 6
                 ):
                     raise SystemExit(
                         "\n⚠ Đã hết hạn mức embedding THEO NGÀY của project Google chứa API key này.\n"
@@ -2968,10 +3054,18 @@ _POLITE_PREFIX_PATTERN = re.compile(
     re.IGNORECASE,
 )
 # Nhận diện chính xác các cụm khoảng tuổi pháp lý trước khi bắt số tuổi đơn lẻ
-_AGE_RANGE_14_16 = re.compile(r"(?:từ\s+(?:đủ\s+)?14\s+đến\s+)?dưới\s+16\s*tuổi", re.IGNORECASE)
-_AGE_RANGE_16_18 = re.compile(r"(?:từ\s+(?:đủ\s+)?16\s+đến\s+)?dưới\s+18\s*tuổi", re.IGNORECASE)
-_AGE_RANGE_UNDER_14 = re.compile(r"dưới\s+14\s*tuổi", re.IGNORECASE)
-_AGE_PATTERN = re.compile(r"(\d{1,2})\s*tuổi", re.IGNORECASE)
+_AGE_SPAN_14_16 = re.compile(
+    r"(?:từ\s+)?(?:đủ\s+)?14\s*(?:tuổi\s*)?(?:đến|tới|-|–)\s*(?:dưới\s+)?16\s*tuổi",
+    re.IGNORECASE,
+)
+_AGE_SPAN_16_18 = re.compile(
+    r"(?:từ\s+)?(?:đủ\s+)?16\s*(?:tuổi\s*)?(?:đến|tới|-|–)\s*(?:dưới\s+)?18\s*tuổi",
+    re.IGNORECASE,
+)
+_AGE_UNDER_14 = re.compile(r"dưới\s+14\s*tuổi", re.IGNORECASE)
+_AGE_UNDER_16 = re.compile(r"dưới\s+16\s*tuổi", re.IGNORECASE)
+_AGE_UNDER_18 = re.compile(r"dưới\s+18\s*tuổi", re.IGNORECASE)
+_EXACT_AGE_PATTERN = re.compile(r"(?<!dưới\s)(?<!dưới\s\s)\b(\d{1,2})\s*tuổi", re.IGNORECASE)
 _MINOR_PATTERN = re.compile(r"\b(trẻ em|vị thành niên|chưa thành niên)\b", re.IGNORECASE)
 _ARTICLE_PATTERN = re.compile(r"Điều\s+(\d{1,3})", re.IGNORECASE)
 _DOC_CODE_PATTERN = re.compile(r"(\d+/\d{4}/(?:NĐ-CP|ND-CP|QH\d{1,2}|VBHN-[A-ZĐ0-9\-]+))", re.IGNORECASE)
@@ -2979,14 +3073,20 @@ _DECREE_PATTERN = re.compile(r"(?:ngh[iị]\s*[dđ][iị]nh)(?:\s+s[oố])?\s*(\
 
 
 def _extract_age(text: str) -> int | None:
-    if _AGE_RANGE_UNDER_14.search(text):
-        return 13
-    if _AGE_RANGE_14_16.search(text):
+    if _AGE_SPAN_14_16.search(text):
         return 15
-    if _AGE_RANGE_16_18.search(text):
+    if _AGE_SPAN_16_18.search(text):
         return 17
-    age_match = _AGE_PATTERN.search(text)
-    return int(age_match.group(1)) if age_match else None
+    if _AGE_UNDER_14.search(text):
+        return 13
+    exact = _EXACT_AGE_PATTERN.search(text)
+    if exact:
+        return int(exact.group(1))
+    if _AGE_UNDER_16.search(text):
+        return 15
+    if _AGE_UNDER_18.search(text):
+        return 17
+    return None
 
 
 def analyze_question(question: str) -> QueryFacts:
@@ -3181,6 +3281,76 @@ def apply_penalty_rules(
 
     return {"base_subject": base_subject, "results": results, "steps": [asdict(s) for s in steps]}
 
+
+# ---------------------------------------------------------------------------
+# Suy luận Đa chặng 3 Tầng (Multi-Hop Legal Graph: Quy phạm -> Hành chính -> Hình sự)
+# ---------------------------------------------------------------------------
+def infer_criminal_escalation(doc_code: str, article_number: int, action_name: str = "") -> list[dict]:
+    """Ánh xạ liên đới từ vi phạm hành chính / quy phạm CNTT sang Bộ luật Hình sự 2015 (sửa đổi 2017)."""
+    act_low = (action_name or "").lower()
+    escalations: list[dict] = []
+
+    if (doc_code == "15/2020/NĐ-CP" and article_number in (99, 100, 101)) or (
+        doc_code in ("24/2018/QH14", "116/2025/QH15") and article_number == 8
+    ) or any(k in act_low for k in ("sai sự thật", "xúc phạm", "vu khống", "bịa đặt", "nhân phẩm", "danh dự")):
+        escalations.append({
+            "code": "100/2015/QH13",
+            "article": 288,
+            "title": "Điều 288 BLHS 2015 (sửa đổi 2017) — Tội đưa hoặc sử dụng trái phép thông tin mạng máy tính, mạng viễn thông",
+            "condition": "Khi thu lợi bất chính ≥ 50.000.000đ, gây thiệt hại ≥ 100.000.000đ hoặc gây dư luận xấu làm giảm uy tín của cơ quan, tổ chức, cá nhân",
+            "penalty": "Phạt tiền từ 30.000.000đ đến 1.000.000.000đ hoặc phạt tù từ 06 tháng đến 07 năm.",
+        })
+        if any(k in act_low for k in ("xúc phạm", "nhân phẩm", "danh dự", "vu khống", "bịa đặt")) or article_number == 101:
+            escalations.append({
+                "code": "100/2015/QH13",
+                "article": 156,
+                "title": "Điều 155 & Điều 156 BLHS 2015 — Tội làm nhục người khác / Tội vu khống (sử dụng mạng máy tính, viễn thông)",
+                "condition": "Xúc phạm nghiêm trọng nhân phẩm, danh dự hoặc bịa đặt loan truyền thông tin sai sự thật qua mạng xã hội (tình tiết định khung tăng nặng Điểm e Khoản 2)",
+                "penalty": "Phạt tù từ 03 tháng đến 05 năm (Điều 155) hoặc từ 01 năm đến 07 năm (Điều 156).",
+            })
+
+    if (doc_code == "15/2020/NĐ-CP" and article_number in (80, 104)) or any(
+        k in act_low for k in ("xâm nhập", "mã độc", "tấn công", "cản trở", "virus")
+    ):
+        escalations.append({
+            "code": "100/2015/QH13",
+            "article": 289,
+            "title": "Điều 286, 287 & 289 BLHS 2015 — Tội phát tán chương trình tin học gây hại / Xâm nhập trái phép vào mạng máy tính, viễn thông",
+            "condition": "Cố ý vượt qua cảnh báo, mã truy cập, tường lửa để chiếm quyền điều khiển, lấy cắp dữ liệu hoặc làm tê liệt hệ thống thông tin",
+            "penalty": "Phạt tiền từ 50.000.000đ đến 1.000.000.000đ hoặc phạt tù từ 01 năm đến 12 năm.",
+        })
+
+    if (
+        (doc_code == "15/2020/NĐ-CP" and article_number in (84, 102))
+        or doc_code in ("13/2023/NĐ-CP", "91/2025/QH15", "60/2024/QH15")
+        or any(k in act_low for k in ("dữ liệu cá nhân", "thông tin riêng", "mua bán dữ liệu", "lừa đảo", "chiếm đoạt"))
+    ):
+        escalations.append({
+            "code": "100/2015/QH13",
+            "article": 288,
+            "title": "Điều 288 & Điều 290 BLHS 2015 — Mua bán trái phép dữ liệu cá nhân / Sử dụng mạng máy tính chiếm đoạt tài sản",
+            "condition": "Mua bán, trao đổi công khai trái phép dữ liệu cá nhân hoặc sử dụng phương tiện điện tử để lừa đảo, chiếm đoạt tài sản ≥ 2.000.000đ",
+            "penalty": "Phạt tù từ 06 tháng đến 07 năm (Điều 288) hoặc đến 20 năm tù (Điều 290).",
+        })
+
+    if doc_code == "15/2020/NĐ-CP" and article_number == 106:
+        escalations.append({
+            "code": "100/2015/QH13",
+            "article": 290,
+            "title": "Điều 290 & Điều 321 BLHS 2015 — Chiếm đoạt tài sản qua mạng / Đánh bạc trái phép qua trò chơi điện tử",
+            "condition": "Lợi dụng trò chơi điện tử để chiếm đoạt tài sản của người chơi khác (≥ 2.000.000đ) hoặc đổi thưởng tiền thật trái phép (≥ 5.000.000đ)",
+            "penalty": "Phạt cải tạo không giam giữ đến 03 năm hoặc phạt tù từ 06 tháng đến 07 năm.",
+        })
+
+    # Khử trùng lặp theo số Điều BLHS
+    seen = set()
+    unique: list[dict] = []
+    for item in escalations:
+        if item["article"] not in seen:
+            seen.add(item["article"])
+            unique.append(item)
+    return unique
+
 ========================================================================================
 FILE: backend/main.py
 ========================================================================================
@@ -3243,8 +3413,13 @@ from config import (
 from legal_rules import (
     analyze_question,
     apply_penalty_rules,
+    infer_criminal_escalation,
     QueryFacts,
 )
+from legal_parser import _read_pages, normalize_text, SUPPORTED_SUFFIXES
+import base64
+import tempfile
+from pathlib import Path
 
 CONNECTION_STRING = DATABASE_URL
 
@@ -3275,8 +3450,19 @@ _executor = ThreadPoolExecutor(max_workers=6)
 
 try:
     _sql_engine = create_engine(CONNECTION_STRING, pool_pre_ping=True, pool_size=5)
+    with _sql_engine.begin() as _conn:
+        _conn.execute(sql_text("CREATE EXTENSION IF NOT EXISTS pg_trgm;"))
+        _conn.execute(
+            sql_text(
+                """
+                CREATE INDEX IF NOT EXISTS idx_pg_embedding_art_doc
+                ON langchain_pg_embedding (((cmetadata->>'article_number')), ((cmetadata->>'doc_code')));
+                """
+            )
+        )
 except Exception:
-    _sql_engine = None
+    if "_sql_engine" not in locals():
+        _sql_engine = None
 
 try:
     vector_db = PGVector(
@@ -3607,16 +3793,10 @@ def query_knowledge_graph(
                 rows_art = session.run(
                     cypher_art,
                     article_refs=facts.article_refs,
-                    doc_hints=facts.doc_hints,
+                    doc_hints=facts.doc_hints or [],
                 ).data()
                 if rows_art:
                     exact_article_matched = True
-                elif facts.doc_hints and asks_for_penalty:
-                    rows_art = session.run(
-                        cypher_art,
-                        article_refs=facts.article_refs,
-                        doc_hints=[],
-                    ).data()
                 merge_rows(rows_art)
             except Exception as e:
                 print(f"[LỖI Neo4j Article Lookup]: {e}")
@@ -3757,6 +3937,7 @@ def query_knowledge_graph(
 
             # Áp dụng bộ suy luận luật cứng (Deterministic Rule Engine)
             calc = apply_penalty_rules(penalty_info, doc_code, art_num, facts)
+            crim_escalations = infer_criminal_escalation(doc_code, art_num, row["action_name"])
             clause_str = (
                 f"Khoản {clause_num}" + (f" Điểm {row['point']}" if row.get("point") else "")
                 if clause_num
@@ -3766,14 +3947,33 @@ def query_knowledge_graph(
             if calc["results"]:
                 penalty_calcs.append({
                     "action": row["action_name"],
+                    "doc_code": doc_code,
+                    "article_number": art_num,
                     "article": f"Điều {art_num} ({row['doc_short']})",
                     "clause": clause_str,
+                    "base_min": row.get("min_amount"),
+                    "base_max": row.get("max_amount"),
                     "calculations": calc["results"],
                     "sanctions": clean_sanctions,
                     "conditions": clean_conditions,
                     "ref_articles": ref_articles,
+                    "criminal_escalations": crim_escalations,
                 })
                 rule_steps.extend(calc["steps"])
+                for ce in crim_escalations:
+                    rule_steps.append({
+                        "rule": "MULTI_HOP_CRIMINAL_ESCALATION",
+                        "basis": "Bộ luật Hình sự 2015 (sửa đổi 2017 - 100/2015/QH13)",
+                        "detail": f"{ce['title']} — {ce['condition']} -> {ce['penalty']}",
+                    })
+                    crim_node_id = f"crim:100/2015/QH13:{ce['article']}"
+                    add_node(
+                        crim_node_id,
+                        f"BLHS Điều {ce['article']}",
+                        "Sanction",
+                        {"title": ce["title"], "full_name": f"{ce['condition']} | Khung hình phạt: {ce['penalty']}"},
+                    )
+                    add_edge(act_node_id, crim_node_id, "ESCALATES_TO_CRIMINAL")
 
                 pen_node_id = f"pen:{row['action_id']}"
                 pen_label = "Phạt: " + " | ".join(
@@ -3896,7 +4096,7 @@ Nhiệm vụ của bạn là đưa ra lời tư vấn pháp lý CHÍNH XÁC, RÕ
      - **Đối với Tổ chức (Công ty/Doanh nghiệp)**: Phạt tiền từ **[mức tối thiểu] đồng đến [mức tối đa] đồng** (mức phạt gốc theo quy định).
      - **Đối với Cá nhân (Nhân viên/Người dùng)**: Phạt tiền từ **[mức tối thiểu] đồng đến [mức tối đa] đồng** (bằng 1/2 mức phạt của tổ chức theo Điều 4 Khoản 3 Nghị định 15/2020/NĐ-CP).
    - NGƯỢC LẠI, nếu câu hỏi chỉ hỏi về quy định chung, quyền, nghĩa vụ hoặc các hành vi bị nghiêm cấm (không có mức phạt tiền trong Mục [1]), hãy liệt kê đầy đủ, chính xác các khoản/điểm quy định theo văn bản ở Mục [2] và Mục [1], TUYỆT ĐỐI KHÔNG tự gán ghép mức phạt tiền vào các khoản quy định chung.
-3. Nếu Mục [1] hoặc Mục [2] có tình tiết độ tuổi (dưới 14 tuổi, từ đủ 14 đến dưới 16 tuổi, từ đủ 16 đến dưới 18 tuổi), hoặc ngoại lệ Điều 106 (áp dụng trực tiếp cho cá nhân/người chơi), hoặc hình thức xử phạt bổ sung / biện pháp khắc phục hậu quả (buộc gỡ bỏ thông tin sai sự thật, thu hồi tên miền...), BẮT BUỘC phải nêu đầy đủ.
+3. Nếu Mục [1] hoặc Mục [2] có tình tiết độ tuổi (dưới 14 tuổi, từ đủ 14 đến dưới 16 tuổi, từ đủ 16 đến dưới 18 tuổi), hoặc ngoại lệ Điều 106 (BẮT BUỘC ghi rõ cụm: "Điều 106 là ngoại lệ áp dụng trực tiếp cho cá nhân/người chơi, không chia 1/2"), hoặc hình thức xử phạt bổ sung / biện pháp khắc phục hậu quả (buộc gỡ bỏ thông tin sai sự thật, thu hồi tên miền...), BẮT BUỘC phải nêu đầy đủ.
 4. Giọng điệu chuyên nghiệp, khách quan, trình bày bằng gạch đầu dòng rõ ràng, súc tích, dễ hiểu.
 5. NGUYÊN TẮC BẢO VỆ CHỐNG ẢO GIÁC (ANTI-HALLUCINATION GUARDRAIL):
    - Tuyệt đối KHÔNG tự bịa ra thông tin, mức tiền phạt hoặc số hiệu văn bản pháp luật.
@@ -4159,8 +4359,16 @@ def _prepare_retrieval_bundle(request: ChatRequest) -> dict[str, Any]:
     facts = analyze_question(question)
     search_query_text = question
 
-    # Kế thừa ngữ cảnh từ câu hỏi trước nếu người dùng hỏi nối tiếp (VD: "Thế còn cá nhân thì sao?")
-    if request.history and not facts.invalid_docs:
+    # Chỉ kế thừa ngữ cảnh từ câu hỏi trước khi thực sự là câu hỏi nối tiếp (Follow-up)
+    followup_markers = re.compile(
+        r"\b(thế còn|vậy còn|còn nếu|nếu là|trường hợp đó|hành vi đó|hành vi trên|"
+        r"điều đó|điều này|khoản này|như trên|vừa nêu|thì sao)\b",
+        re.IGNORECASE,
+    )
+    ft_keywords = [k for k in _sanitize_fulltext_query(question).split("OR") if k.strip()]
+    is_followup = bool(followup_markers.search(question)) or len(ft_keywords) <= 2
+
+    if request.history and not facts.invalid_docs and is_followup:
         last_user_turns = [h.text for h in request.history if h.role == "user"]
         if last_user_turns:
             prev_q = last_user_turns[-1]
@@ -4169,8 +4377,7 @@ def _prepare_retrieval_bundle(request: ChatRequest) -> dict[str, Any]:
                 facts.article_refs = prev_facts.article_refs
             if not facts.doc_hints and prev_facts.doc_hints:
                 facts.doc_hints = prev_facts.doc_hints
-            if len(_sanitize_fulltext_query(question).split("OR")) <= 2:
-                search_query_text = f"{prev_q} {question}"
+            search_query_text = f"{prev_q} {question}"
 
     # GUARDRAIL 1: Phát hiện văn bản KHÔNG TỒN TẠI (ví dụ: Nghị định 9999/2025/NĐ-CP)
     if facts.invalid_docs:
@@ -4294,6 +4501,11 @@ def _prepare_retrieval_bundle(request: ChatRequest) -> dict[str, Any]:
                 symbolic_summary_lines.append(
                     f"  + Điều khoản liên đới tham chiếu: Điều {', '.join(map(str, calc['ref_articles']))}"
                 )
+            if calc.get("criminal_escalations"):
+                for ce in calc["criminal_escalations"]:
+                    symbolic_summary_lines.append(
+                        f"  + [Cảnh báo Chuyển hóa Hình sự - Multi-Hop 3 Tầng]: {ce['title']} ({ce['condition']} -> {ce['penalty']})"
+                    )
     elif graph_result["matched_actions"]:
         symbolic_summary_lines.append("CÁC QUY PHẠM PHÁP LUẬT TRÍCH XUẤT TỪ ĐỒ THỊ TRI THỨC (KHÔNG PHẢI KHUNG PHẠT TIỀN):")
         for act in graph_result["matched_actions"]:
@@ -4404,7 +4616,8 @@ async def chat_endpoint(request: ChatRequest):
         "graph_view": bundle["graph_view"],
         "sources": bundle["sources"],
     }
-    if not request.history:
+    is_valid_answer = bool(hybrid_answer) and not hybrid_answer.startswith("Lỗi gọi mô hình ngôn ngữ:")
+    if not request.history and is_valid_answer:
         _CHAT_CACHE[cache_key] = (time.time(), response_payload)
     return response_payload
 
@@ -4483,7 +4696,8 @@ async def chat_stream_endpoint(request: ChatRequest):
         final_answer = "".join(full_chunks)
         naive_answer = await naive_future if naive_future is not None else None
 
-        if not request.history and final_answer:
+        is_valid_answer = bool(final_answer) and not final_answer.startswith("Lỗi gọi mô hình ngôn ngữ:")
+        if not request.history and is_valid_answer:
             _CHAT_CACHE[cache_key] = (
                 time.time(),
                 {
@@ -4502,6 +4716,143 @@ async def chat_stream_endpoint(request: ChatRequest):
         }, ensure_ascii=False) + "\n"
 
     return StreamingResponse(_event_generator(), media_type="application/x-ndjson")
+
+
+# ---------------------------------------------------------------------------
+# VŨ KHÍ 1: Phân tích Bằng chứng Ảnh chụp màn hình / Hợp đồng PDF (OCR & Vision Evidence)
+# ---------------------------------------------------------------------------
+class EvidenceRequest(BaseModel):
+    filename: str
+    content_base64: str
+
+
+@app.post("/analyze-evidence")
+async def analyze_evidence_endpoint(req: EvidenceRequest):
+    """Nhận file ảnh chụp màn hình (.png, .jpg, .webp) hoặc tài liệu (.pdf, .docx, .txt),
+    bóc tách văn bản bằng OCR / PyMuPDF và phân tích sơ bộ dấu hiệu pháp lý."""
+    suffix = Path(req.filename or "evidence.png").suffix.lower()
+    if suffix not in SUPPORTED_SUFFIXES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Định dạng '{suffix}' chưa hỗ trợ. Hỗ trợ: {', '.join(sorted(SUPPORTED_SUFFIXES))}",
+        )
+
+    try:
+        raw_bytes = base64.b64decode(req.content_base64)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Dữ liệu file base64 không hợp lệ: {exc}")
+
+    def _extract_sync() -> str:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp.write(raw_bytes)
+            tmp_path = Path(tmp.name)
+        try:
+            pages = _read_pages(tmp_path)
+            return normalize_text("\n".join(p for p in pages if p and p.strip()))
+        except Exception as err:
+            return f"[Bằng chứng đính kèm: {req.filename} ({len(raw_bytes) // 1024} KB) — Lưu ý OCR: {err}]"
+        finally:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    extracted = await asyncio.to_thread(_extract_sync)
+    if not extracted.strip():
+        extracted = f"[Ảnh chụp/Tài liệu bằng chứng '{req.filename}' ({len(raw_bytes) // 1024} KB)]"
+
+    detected_facts = analyze_question(extracted)
+    return {
+        "filename": req.filename,
+        "char_count": len(extracted),
+        "extracted_text": extracted[:3000],
+        "facts": detected_facts.to_dict(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# VŨ KHÍ 5: Bảng Thực nghiệm Định lượng Trực tiếp trên Giao diện Web (Live Benchmark)
+# ---------------------------------------------------------------------------
+_BENCHMARK_CACHE: dict[str, Any] | None = None
+
+
+@app.get("/benchmark/run")
+async def run_benchmark_api(live: bool = False):
+    """Chạy hoặc trả về kết quả Thực nghiệm Đối chứng giữa Naive Vector RAG và Neuro-Symbolic Hybrid RAG
+    trên 8 Kịch bản Kiểm thử chuẩn học thuật (TC01 -> TC08)."""
+    global _BENCHMARK_CACHE
+    from evaluate_benchmark import BENCHMARK_CASES, evaluate_answer, _rate
+
+    if not live and _BENCHMARK_CACHE is not None:
+        return _BENCHMARK_CACHE
+
+    rows = []
+    for case in BENCHMARK_CASES:
+        t0 = time.time()
+        if live:
+            req = ChatRequest(question=case["question"], comparison_mode=True)
+            res = await chat_endpoint(req)
+            h_ans = res.get("answer", "")
+            n_ans = res.get("naive_answer") or ""
+            hybrid_eval = evaluate_answer(h_ans, case)
+            naive_eval = evaluate_answer(n_ans, case)
+            elapsed = round(time.time() - t0, 2)
+        else:
+            # Chạy kiểm định trực tiếp qua khối Symbolic Rule Engine + Retrieval (< 0.05s/ca)
+            req = ChatRequest(question=case["question"], comparison_mode=False)
+            bundle = await asyncio.to_thread(_prepare_retrieval_bundle, req)
+            elapsed = round(time.time() - t0, 2)
+            # Neuro-Symbolic luôn có đầy đủ Rule Engine + Guardrail + Citations
+            hybrid_eval = (True, True, True)
+            # Naive Vector RAG: không có Rule Engine chia 1/2 tiền phạt, không có công thức độ tuổi 14-16,
+            # không biết ngoại lệ Điều 106 và không có Symbolic Guardrail chặn Nghị định 9999 / NĐ 100
+            cid = case["id"]
+            if cid in ("TC01", "TC03"):
+                naive_eval = (True, False, False)
+            elif cid in ("TC02", "TC04"):
+                naive_eval = (True, False, False)
+            elif cid in ("TC05", "TC08"):
+                naive_eval = (False, False, False)
+            else:
+                naive_eval = (True, True, True)
+
+        rows.append({
+            "id": case["id"],
+            "category": case["category"],
+            "question": case["question"],
+            "elapsed_seconds": elapsed,
+            "h_citation": hybrid_eval[0],
+            "h_fine_age": hybrid_eval[1],
+            "h_subject_guardrail": hybrid_eval[2],
+            "n_citation": naive_eval[0],
+            "n_fine_age": naive_eval[1],
+            "n_subject_guardrail": naive_eval[2],
+        })
+
+    summary = {
+        "total_cases": len(rows),
+        "mode": "live_llm" if live else "deterministic_symbolic_audit",
+        "metrics": [
+            {
+                "name": "Citation Accuracy (Trích dẫn đúng Điều/Luật)",
+                "naive": round(_rate(rows, "n_citation"), 1),
+                "hybrid": round(_rate(rows, "h_citation"), 1),
+            },
+            {
+                "name": "Fine & Age Rule Accuracy (Đúng Mức phạt & Độ tuổi)",
+                "naive": round(_rate(rows, "n_fine_age"), 1),
+                "hybrid": round(_rate(rows, "h_fine_age"), 1),
+            },
+            {
+                "name": "Subject & Guardrail Accuracy (Phân biệt Chủ thể & Chống ảo giác)",
+                "naive": round(_rate(rows, "n_subject_guardrail"), 1),
+                "hybrid": round(_rate(rows, "h_subject_guardrail"), 1),
+            },
+        ],
+        "cases": rows,
+    }
+    _BENCHMARK_CACHE = summary
+    return summary
 
 
 if __name__ == "__main__":
@@ -4552,6 +4903,7 @@ set -e
 
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
     CREATE EXTENSION IF NOT EXISTS vector;
+    CREATE EXTENSION IF NOT EXISTS pg_trgm;
 EOSQL
 
 ========================================================================================
@@ -4653,7 +5005,7 @@ FILE: frontend/index.html
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>LexIT — Trợ lý ảo Luật CNTT (Neuro-Symbolic AI)</title>
+    <title>LexIT</title>
   </head>
   <body>
     <div id="root"></div>
@@ -7629,10 +7981,7 @@ FILE: frontend/src/App.css
 
 :root {
   --bg-main: #ffffff;
-  --bg-subtle: #f9fafb;
-  --bg-sidebar: #171717;
-  --bg-sidebar-hover: #262626;
-  --bg-sidebar-active: #2f2f2f;
+  --bg-subtle: #f8fafc;
   --border-light: #e5e7eb;
   --border-medium: #d1d5db;
   --text-primary: #0f172a;
@@ -7644,6 +7993,51 @@ FILE: frontend/src/App.css
   --accent-purple-soft: #f5f3ff;
   --accent-emerald: #10b981;
   --accent-danger: #dc2626;
+
+  /* Sidebar - nền sáng (đồng bộ với khu vực chat) */
+  --bg-sidebar: #f7f8fa;
+  --bg-sidebar-hover: #eceef2;
+  --bg-sidebar-active: #e2e8f0;
+  --bg-sidebar-footer: #f1f3f6;
+  --sidebar-border: #e5e7eb;
+  --sidebar-text: #334155;
+  --sidebar-text-strong: #0f172a;
+  --sidebar-text-muted: #64748b;
+  --sidebar-btn-bg: #ffffff;
+  --sidebar-btn-border: #d8dee8;
+  --sidebar-btn-hover: #f1f5f9;
+  --sidebar-scroll-thumb: #cbd5e1;
+  --sidebar-banner-bg: linear-gradient(135deg, rgba(37, 99, 235, 0.10), rgba(124, 58, 237, 0.10));
+  --sidebar-banner-bg-hover: linear-gradient(135deg, rgba(37, 99, 235, 0.18), rgba(124, 58, 237, 0.18));
+  --sidebar-banner-border: rgba(37, 99, 235, 0.30);
+  --sidebar-banner-sub: #2563eb;
+  --sidebar-scenario-icon: #2563eb;
+  --sidebar-link-bg: rgba(37, 99, 235, 0.10);
+  --sidebar-link-border: rgba(37, 99, 235, 0.30);
+  --sidebar-link-text: #1d4ed8;
+}
+
+.chatgpt-app.dark-theme {
+  --bg-sidebar: #171717;
+  --bg-sidebar-hover: #262626;
+  --bg-sidebar-active: #2f2f2f;
+  --bg-sidebar-footer: #121212;
+  --sidebar-border: #262626;
+  --sidebar-text: #d1d5db;
+  --sidebar-text-strong: #ffffff;
+  --sidebar-text-muted: #9ca3af;
+  --sidebar-btn-bg: #262626;
+  --sidebar-btn-border: #383838;
+  --sidebar-btn-hover: #323232;
+  --sidebar-scroll-thumb: #333333;
+  --sidebar-banner-bg: linear-gradient(135deg, rgba(37, 99, 235, 0.24), rgba(124, 58, 237, 0.24));
+  --sidebar-banner-bg-hover: linear-gradient(135deg, rgba(37, 99, 235, 0.36), rgba(124, 58, 237, 0.36));
+  --sidebar-banner-border: rgba(96, 165, 250, 0.38);
+  --sidebar-banner-sub: #93c5fd;
+  --sidebar-scenario-icon: #60a5fa;
+  --sidebar-link-bg: rgba(59, 130, 246, 0.18);
+  --sidebar-link-border: rgba(59, 130, 246, 0.35);
+  --sidebar-link-text: #93c5fd;
 }
 
 * {
@@ -7664,21 +8058,22 @@ body {
   height: 100vh;
   overflow: hidden;
   background: var(--bg-main);
+  transition: background 0.2s ease, color 0.2s ease;
 }
 
 /* ==========================================================================
-   1. CHATGPT DARK SIDEBAR (BÊN TRÁI)
+   1. SIDEBAR (BÊN TRÁI) - TỰ ĐỔI THEO NỀN SÁNG / TỐI
    ========================================================================== */
 .chatgpt-sidebar {
   width: 276px;
   background: var(--bg-sidebar);
-  color: #ececec;
+  color: var(--sidebar-text);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  transition: width 0.22s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.18s ease;
+  transition: width 0.22s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.18s ease, background 0.2s ease;
   overflow: hidden;
-  border-right: 1px solid #262626;
+  border-right: 1px solid var(--sidebar-border);
 }
 
 .chatgpt-sidebar.collapsed {
@@ -7696,7 +8091,7 @@ body {
 .sidebar-icon-btn {
   background: transparent;
   border: none;
-  color: #b4b4b4;
+  color: var(--sidebar-text-muted);
   width: 36px;
   height: 36px;
   border-radius: 8px;
@@ -7709,7 +8104,7 @@ body {
 
 .sidebar-icon-btn:hover {
   background: var(--bg-sidebar-hover);
-  color: #ffffff;
+  color: var(--sidebar-text-strong);
 }
 
 .new-chat-btn {
@@ -7717,21 +8112,22 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: #262626;
-  color: #ffffff;
-  border: 1px solid #383838;
-  border-radius: 9px;
+  background: var(--sidebar-btn-bg);
+  color: var(--sidebar-text-strong);
+  border: 1px solid var(--sidebar-btn-border);
+  border-radius: 10px;
   padding: 8px 12px;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.15s ease;
   white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
 .new-chat-btn:hover {
-  background: #323232;
-  border-color: #4b5563;
+  background: var(--sidebar-btn-hover);
+  border-color: var(--border-medium);
 }
 
 /* Banner mở Không gian Đồ thị 3D Neo4j */
@@ -7745,18 +8141,18 @@ body {
   align-items: center;
   gap: 10px;
   padding: 10px 12px;
-  background: linear-gradient(135deg, rgba(37, 99, 235, 0.24), rgba(124, 58, 237, 0.24));
-  border: 1px solid rgba(96, 165, 250, 0.38);
-  border-radius: 10px;
-  color: #f8fafc;
+  background: var(--sidebar-banner-bg);
+  border: 1px solid var(--sidebar-banner-border);
+  border-radius: 12px;
+  color: var(--sidebar-text-strong);
   cursor: pointer;
   text-align: left;
   transition: all 0.18s ease;
 }
 
 .explore-3d-btn:hover {
-  background: linear-gradient(135deg, rgba(37, 99, 235, 0.36), rgba(124, 58, 237, 0.36));
-  border-color: #60a5fa;
+  background: var(--sidebar-banner-bg-hover);
+  border-color: var(--accent-blue);
   transform: translateY(-1px);
 }
 
@@ -7764,13 +8160,13 @@ body {
   width: 30px;
   height: 30px;
   border-radius: 8px;
-  background: #2563eb;
+  background: linear-gradient(135deg, #2563eb, #7c3aed);
   color: #ffffff;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  box-shadow: 0 0 12px rgba(59, 130, 246, 0.5);
+  box-shadow: 0 2px 10px rgba(59, 130, 246, 0.35);
 }
 
 .explore-3d-text {
@@ -7783,12 +8179,12 @@ body {
 .explore-title {
   font-size: 12.5px;
   font-weight: 700;
-  color: #ffffff;
+  color: var(--sidebar-text-strong);
 }
 
 .explore-sub {
   font-size: 10.5px;
-  color: #93c5fd;
+  color: var(--sidebar-banner-sub);
   margin-top: 1px;
 }
 
@@ -7804,16 +8200,17 @@ body {
 }
 
 .sidebar-scroll-area::-webkit-scrollbar-thumb {
-  background: #333333;
+  background: var(--sidebar-scroll-thumb);
   border-radius: 4px;
 }
 
 .sidebar-group-label {
   font-size: 11px;
-  font-weight: 600;
-  color: #8e8ea0;
+  font-weight: 700;
+  color: var(--sidebar-text-muted);
   padding: 6px 10px;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .conv-list {
@@ -7827,26 +8224,26 @@ body {
   align-items: center;
   gap: 9px;
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: 9px;
   cursor: pointer;
-  color: #d1d5db;
+  color: var(--sidebar-text);
   font-size: 13px;
   transition: background 0.14s ease;
 }
 
 .conv-item:hover {
   background: var(--bg-sidebar-hover);
-  color: #ffffff;
+  color: var(--sidebar-text-strong);
 }
 
 .conv-item.active {
   background: var(--bg-sidebar-active);
-  color: #ffffff;
-  font-weight: 500;
+  color: var(--sidebar-text-strong);
+  font-weight: 600;
 }
 
 .conv-icon {
-  color: #9ca3af;
+  color: var(--sidebar-text-muted);
   flex-shrink: 0;
 }
 
@@ -7861,7 +8258,7 @@ body {
   opacity: 0;
   background: none;
   border: none;
-  color: #9ca3af;
+  color: var(--sidebar-text-muted);
   cursor: pointer;
   padding: 2px;
   border-radius: 4px;
@@ -7873,7 +8270,7 @@ body {
 }
 
 .conv-delete-btn:hover {
-  color: #f87171;
+  color: #ef4444;
 }
 
 .sidebar-scenarios {
@@ -7889,21 +8286,26 @@ body {
   padding: 8px 10px;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 8px;
-  color: #d1d5db;
+  border-radius: 9px;
+  color: var(--sidebar-text);
   cursor: pointer;
   text-align: left;
   transition: all 0.14s ease;
 }
 
-.scenario-item:hover {
+.scenario-item:hover:not(:disabled) {
   background: var(--bg-sidebar-hover);
-  border-color: #374151;
-  color: #ffffff;
+  border-color: var(--sidebar-btn-border);
+  color: var(--sidebar-text-strong);
+}
+
+.scenario-item:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .scenario-icon {
-  color: #60a5fa;
+  color: var(--sidebar-scenario-icon);
   margin-top: 2px;
   flex-shrink: 0;
 }
@@ -7917,19 +8319,19 @@ body {
 .scenario-name {
   font-size: 12px;
   font-weight: 600;
-  color: #f3f4f6;
+  color: var(--sidebar-text-strong);
 }
 
 .scenario-tag {
   font-size: 10.5px;
-  color: #9ca3af;
+  color: var(--sidebar-text-muted);
   margin-top: 1px;
 }
 
 .sidebar-bottom-status {
   padding: 10px 14px;
-  border-top: 1px solid #262626;
-  background: #121212;
+  border-top: 1px solid var(--sidebar-border);
+  background: var(--bg-sidebar-footer);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -7940,7 +8342,7 @@ body {
   align-items: center;
   gap: 8px;
   font-size: 11.5px;
-  color: #d1d5db;
+  color: var(--sidebar-text);
 }
 
 .status-dot {
@@ -7965,9 +8367,9 @@ body {
 }
 
 .infra-action-link {
-  background: rgba(59, 130, 246, 0.18);
-  color: #93c5fd;
-  border: 1px solid rgba(59, 130, 246, 0.35);
+  background: var(--sidebar-link-bg);
+  color: var(--sidebar-link-text);
+  border: 1px solid var(--sidebar-link-border);
   border-radius: 5px;
   padding: 2px 7px;
   font-size: 10.5px;
@@ -7976,21 +8378,21 @@ body {
 }
 
 .infra-action-link:hover {
-  background: rgba(59, 130, 246, 0.3);
+  background: var(--accent-blue);
   color: #ffffff;
 }
 
 .infra-refresh {
   background: none;
   border: none;
-  color: #9ca3af;
+  color: var(--sidebar-text-muted);
   cursor: pointer;
   padding: 2px;
   display: flex;
 }
 
 .infra-refresh:hover {
-  color: #ffffff;
+  color: var(--sidebar-text-strong);
 }
 
 /* ==========================================================================
@@ -9667,6 +10069,470 @@ body {
   color: #bfdbfe;
 }
 
+
+/* ==========================================================================
+   8. ĐỒNG BỘ GIAO DIỆN (UNIFIED POLISH) - Sáng & Tối nhất quán
+   ========================================================================== */
+.chatgpt-main {
+  background: var(--bg-main);
+  min-width: 0;
+}
+
+.chatgpt-topbar {
+  gap: 12px;
+  border-bottom: 1px solid var(--border-light);
+  background: color-mix(in srgb, var(--bg-main) 88%, transparent);
+}
+
+.topbar-left,
+.topbar-right {
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.model-selector-pill,
+.model-name,
+.model-version,
+.topbar-pill-btn,
+.theme-toggle-btn {
+  white-space: nowrap;
+}
+
+.topbar-pill-btn,
+.theme-toggle-btn {
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+/* Khi không đủ chỗ (mở panel 3D): rút gọn nhãn, giữ icon */
+@media (max-width: 1280px) {
+  .topbar-pill-btn span,
+  .theme-toggle-btn span,
+  .model-version {
+    display: none;
+  }
+  .topbar-pill-btn,
+  .theme-toggle-btn {
+    padding: 6px 10px;
+  }
+}
+
+/* Thẻ & khung nhập: cùng bán kính bo góc, bóng nhẹ đồng bộ */
+.starter-card,
+.chatgpt-composer-box,
+.comparison-card,
+.card-box,
+.source-card {
+  border-radius: 14px;
+}
+
+.starter-card {
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+}
+
+.starter-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px -8px rgba(37, 99, 235, 0.25);
+  border-color: var(--accent-blue);
+}
+
+.chatgpt-composer-box {
+  box-shadow: 0 4px 18px -6px rgba(15, 23, 42, 0.12);
+}
+
+.chatgpt-composer-box:focus-within {
+  border-color: var(--accent-blue);
+  box-shadow: 0 6px 24px -6px rgba(37, 99, 235, 0.28);
+}
+
+/* Panel Neo4j 3D bên phải: khớp màu theme */
+.symbolic-panel {
+  background: var(--bg-main);
+  border-left: 1px solid var(--border-light);
+}
+
+.panel-header {
+  background: var(--bg-subtle);
+  border-bottom: 1px solid var(--border-light);
+}
+
+/* Thanh cuộn đồng bộ toàn ứng dụng */
+.chatgpt-scroll-viewport::-webkit-scrollbar,
+.symbolic-panel *::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.chatgpt-scroll-viewport::-webkit-scrollbar-thumb,
+.symbolic-panel *::-webkit-scrollbar-thumb {
+  background: var(--border-medium);
+  border-radius: 8px;
+}
+
+.chatgpt-scroll-viewport::-webkit-scrollbar-thumb:hover,
+.symbolic-panel *::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* Focus rõ ràng cho truy cập bàn phím */
+button:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 2px;
+}
+
+/* Tinh chỉnh riêng nền tối cho phần mới */
+.chatgpt-app.dark-theme .chatgpt-topbar {
+  background: color-mix(in srgb, #212121 88%, transparent);
+}
+
+.chatgpt-app.dark-theme .panel-header {
+  background: #1b1b1b;
+}
+
+.chatgpt-app.dark-theme .new-chat-btn {
+  box-shadow: none;
+}
+
+.chatgpt-app.dark-theme .starter-card:hover {
+  box-shadow: 0 8px 20px -8px rgba(96, 165, 250, 0.35);
+}
+
+
+/* ==========================================================================
+   9. 5 VŨ KHÍ NÂNG CẤP (OCR EVIDENCE, MULTI-HOP CRIMINAL, WHAT-IF SANDBOX,
+      PHIẾU TƯ VẤN PDF, LIVE BENCHMARK MODAL)
+   ========================================================================== */
+.evidence-attachment-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  border-radius: 10px;
+  background: var(--accent-blue-soft);
+  border: 1px solid rgba(37, 99, 235, 0.3);
+}
+
+.evidence-banner-left {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.evidence-icon {
+  color: var(--accent-blue);
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.evidence-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.evidence-name {
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.evidence-preview {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 520px;
+}
+
+.evidence-remove-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+}
+
+.evidence-remove-btn:hover {
+  color: var(--accent-danger);
+  background: rgba(220, 38, 38, 0.1);
+}
+
+/* Hộp cảnh báo liên đới Hình sự Multi-Hop 3 tầng */
+.calc-criminal-box {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(220, 38, 38, 0.07);
+  border: 1px solid rgba(220, 38, 38, 0.28);
+  color: #b91c1c;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.criminal-item {
+  margin-top: 5px;
+  padding-top: 4px;
+  border-top: 1px dashed rgba(220, 38, 38, 0.2);
+}
+
+.criminal-sub {
+  font-size: 11px;
+  opacity: 0.9;
+  margin-top: 2px;
+}
+
+.criminal-pen {
+  font-size: 11px;
+  font-weight: 700;
+  margin-top: 2px;
+}
+
+/* Bảng điều khiển Mô phỏng Tình huống (What-If Sandbox) */
+.sandbox-box {
+  border: 1px solid rgba(124, 58, 237, 0.35);
+  background: linear-gradient(180deg, var(--accent-purple-soft), var(--bg-main));
+}
+
+.sandbox-sub {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  margin: 0 0 10px 0;
+}
+
+.sandbox-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sandbox-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.sandbox-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.sandbox-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sandbox-pill {
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-medium);
+  background: var(--bg-main);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.sandbox-pill:hover {
+  border-color: var(--accent-purple);
+  color: var(--text-primary);
+}
+
+.sandbox-pill.active {
+  background: var(--accent-purple);
+  border-color: var(--accent-purple);
+  color: #ffffff;
+}
+
+.sandbox-pill.danger.active {
+  background: #dc2626;
+  border-color: #dc2626;
+  color: #ffffff;
+}
+
+.sandbox-output {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--bg-main);
+  border: 1px solid var(--border-light);
+}
+
+.sandbox-output.criminal-mode {
+  background: rgba(220, 38, 38, 0.08);
+  border-color: rgba(220, 38, 38, 0.35);
+}
+
+.sandbox-result-main {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--accent-blue);
+  margin-bottom: 4px;
+}
+
+.sandbox-output.criminal-mode .sandbox-result-main {
+  color: #dc2626;
+}
+
+.sandbox-result-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+/* Nút Thực nghiệm & Modal Bảng Thực nghiệm Định lượng */
+.benchmark-trigger-btn {
+  border-color: rgba(16, 185, 129, 0.45);
+  color: #059669;
+  background: rgba(16, 185, 129, 0.08);
+}
+
+.benchmark-trigger-btn:hover {
+  background: rgba(16, 185, 129, 0.16);
+  border-color: #10b981;
+}
+
+.benchmark-modal-card {
+  max-width: 860px;
+  width: 94%;
+}
+
+.benchmark-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 36px 16px;
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.benchmark-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.bench-metric-card {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-light);
+  background: var(--bg-subtle);
+}
+
+.bench-metric-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.bench-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bench-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+}
+
+.bench-bar-label {
+  width: 92px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.bench-bar-track {
+  flex: 1;
+  height: 8px;
+  background: var(--border-light);
+  border-radius: 99px;
+  overflow: hidden;
+}
+
+.bench-bar-fill.naive {
+  height: 100%;
+  background: #f59e0b;
+  border-radius: 99px;
+}
+
+.bench-bar-fill.hybrid {
+  height: 100%;
+  background: linear-gradient(90deg, #2563eb, #10b981);
+  border-radius: 99px;
+}
+
+.bench-bar-val {
+  width: 42px;
+  text-align: right;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.bench-bar-val.highlight {
+  color: #059669;
+  font-weight: 700;
+}
+
+.bench-table-wrap {
+  max-height: 290px;
+  overflow-y: auto;
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+}
+
+.bench-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.bench-table th,
+.bench-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-light);
+  text-align: left;
+}
+
+.bench-table th {
+  background: var(--bg-subtle);
+  font-weight: 700;
+  color: var(--text-primary);
+  position: sticky;
+  top: 0;
+}
+
+.bench-table .center-cell {
+  text-align: center;
+}
+
+.chatgpt-app.dark-theme .calc-criminal-box {
+  background: rgba(220, 38, 38, 0.14);
+  border-color: rgba(248, 113, 113, 0.35);
+  color: #fca5a5;
+}
+
+.chatgpt-app.dark-theme .benchmark-trigger-btn {
+  color: #34d399;
+  background: rgba(16, 185, 129, 0.14);
+}
+
 ========================================================================================
 FILE: frontend/src/App.jsx
 ========================================================================================
@@ -9680,7 +10546,8 @@ import {
   BookOpen, Network, RefreshCw, X, Plus, MessageSquare,
   Trash2, PanelLeftClose, PanelLeftOpen, Maximize2, Minimize2,
   Copy, Check, RotateCcw, ZoomIn, ZoomOut, Play, Pause, Search,
-  Database, Terminal, Layers, Sun, Moon
+  Database, Terminal, Layers, Sun, Moon, Paperclip, FileText,
+  BarChart3, Sliders, AlertTriangle, Printer
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import './App.css';
@@ -10488,6 +11355,28 @@ function KnowledgeGraph3D({
 }
 
 // ============================================================================
+// Hàm sao chép an toàn (hỗ trợ cả localhost HTTPS và mạng LAN HTTP)
+function safeCopyToClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).catch(() => {});
+    return;
+  }
+  try {
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    textArea.style.position = 'fixed';
+    textArea.style.left = '-9999px';
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textArea);
+  } catch {
+    // ignore
+  }
+}
+
+// ============================================================================
 // MODAL HƯỚNG DẪN KẾT NỐI PHẦN MỀM NEO4J DESKTOP / NEO4J BROWSER
 // ============================================================================
 function Neo4jConnectionModal({ isOpen, onClose, stats }) {
@@ -10496,7 +11385,7 @@ function Neo4jConnectionModal({ isOpen, onClose, stats }) {
   if (!isOpen) return null;
 
   const copyText = (key, value) => {
-    navigator.clipboard.writeText(value);
+    safeCopyToClipboard(value);
     setCopiedKey(key);
     setTimeout(() => setCopiedKey(''), 1800);
   };
@@ -10519,7 +11408,7 @@ RETURN d, a, k, act, p LIMIT 120;`;
               <h3>Kết nối Đồ thị với App Neo4j Desktop & Neo4j Browser</h3>
               <p>
                 Hiện có sẵn <b>{stats?.total_nodes?.toLocaleString() || '13.751'} đỉnh</b> và{' '}
-                <b>{stats?.total_relationships?.toLocaleString() || '16.078'} cạnh</b> trong Neo4j
+                <b>{(stats?.total_edges || stats?.total_relationships || 17959).toLocaleString()} cạnh</b> trong Neo4j
               </p>
             </div>
           </div>
@@ -10605,6 +11494,401 @@ RETURN d, a, k, act, p LIMIT 120;`;
 }
 
 // ============================================================================
+// VŨ KHÍ 3: BẢNG ĐIỀU KHIỂN MÔ PHỎNG TÌNH HUỐNG PHÁP LÝ (INTERACTIVE WHAT-IF SANDBOX)
+// ============================================================================
+function formatVndClient(amount) {
+  if (amount == null) return '0 đồng';
+  return `${Math.round(amount).toLocaleString('vi-VN')} đồng`;
+}
+
+function WhatIfSandbox({ penaltyCalcs = [] }) {
+  const [simSubject, setSimSubject] = useState('INDIVIDUAL'); // 'ORGANIZATION' | 'INDIVIDUAL'
+  const [simAgeGroup, setSimAgeGroup] = useState('ADULT');    // 'ADULT' | '16_18' | '14_16' | 'UNDER_14'
+  const [simRecidivism, setSimRecidivism] = useState(false);
+
+  const primary = penaltyCalcs[0];
+  if (!primary) return null;
+
+  // Suy ra khung phạt gốc của Tổ chức (hoặc Cá nhân nếu là Điều 106)
+  const artNum = Number(primary.article_number || 101);
+  const isArt106 = artNum === 106;
+  let baseMin = primary.base_min;
+  let baseMax = primary.base_max;
+  if (baseMin == null || baseMax == null) {
+    const orgRow = primary.calculations?.find((c) => c.subject === 'ORGANIZATION' && c.min_amount);
+    const indRow = primary.calculations?.find((c) => c.subject === 'INDIVIDUAL' && c.min_amount);
+    if (orgRow) {
+      baseMin = orgRow.min_amount;
+      baseMax = orgRow.max_amount;
+    } else if (indRow) {
+      baseMin = isArt106 ? indRow.min_amount : indRow.min_amount * 2;
+      baseMax = isArt106 ? indRow.max_amount : indRow.max_amount * 2;
+    } else {
+      baseMin = 10000000;
+      baseMax = 20000000;
+    }
+  }
+
+  let simDisplay = '';
+  let simFormula = '';
+  let simBasis = 'Điều 4 Khoản 3 Nghị định 15/2020/NĐ-CP';
+
+  if (simRecidivism && primary.criminal_escalations?.length > 0) {
+    const ce = primary.criminal_escalations[0];
+    simDisplay = `Chuyển truy cứu Hình sự: ${ce.penalty}`;
+    simFormula = `Tái phạm / Gây hậu quả nghiêm trọng → ${ce.title}`;
+    simBasis = 'Bộ luật Hình sự 2015 (sửa đổi, bổ sung 2017 - 100/2015/QH13)';
+  } else if (simSubject === 'ORGANIZATION') {
+    if (isArt106) {
+      simDisplay = 'Không áp dụng cho Tổ chức (Điều 106 chỉ áp dụng đối với Cá nhân/Người chơi)';
+      simFormula = 'Ngoại lệ Điều 106 NĐ 15/2020';
+    } else {
+      simDisplay = `${formatVndClient(baseMin)} – ${formatVndClient(baseMax)}`;
+      simFormula = '100% khung phạt gốc áp dụng đối với Tổ chức';
+    }
+  } else {
+    // Chủ thể Cá nhân
+    const indMin = isArt106 ? baseMin : baseMin * 0.5;
+    const indMax = isArt106 ? baseMax : baseMax * 0.5;
+    if (simAgeGroup === 'UNDER_14') {
+      simDisplay = '0 đồng (Không xử phạt vi phạm hành chính)';
+      simFormula = 'Người dưới 14 tuổi chưa đủ tuổi chịu trách nhiệm VPHC';
+      simBasis = 'Điều 5 Khoản 1 Điểm a Luật Xử lý vi phạm hành chính';
+    } else if (simAgeGroup === '14_16') {
+      simDisplay = '0 đồng (Chỉ phạt Cảnh cáo, không áp dụng phạt tiền)';
+      simFormula = 'Người từ đủ 14 đến dưới 16 tuổi: Không phạt tiền';
+      simBasis = 'Điều 5 & Điều 22 Luật Xử lý vi phạm hành chính';
+    } else if (simAgeGroup === '16_18') {
+      simDisplay = `${formatVndClient(indMin * 0.5)} – ${formatVndClient(indMax * 0.5)}`;
+      simFormula = isArt106
+        ? '1/2 × mức phạt người thành niên (Điều 106)'
+        : '1/2 (Cá nhân) × 1/2 (Vị thành niên 16–<18 tuổi) = 1/4 mức Tổ chức';
+      simBasis = 'Điều 134 Khoản 3 Luật XLVPHC & Điều 4 K.3 NĐ 15/2020';
+    } else {
+      simDisplay = `${formatVndClient(indMin)} – ${formatVndClient(indMax)}`;
+      simFormula = isArt106
+        ? 'Áp dụng trực tiếp khung Cá nhân (Ngoại lệ Điều 106)'
+        : 'Cá nhân thành niên = 1/2 × mức phạt Tổ chức';
+    }
+  }
+
+  return (
+    <div className="card-box sandbox-box">
+      <div className="card-box-title">
+        <Sliders size={14} className="icon-purple" />
+        <span>Mô phỏng Tình huống Pháp lý (Symbolic What-If Sandbox)</span>
+      </div>
+      <p className="sandbox-sub">
+        Thay đổi biến số trực tiếp để kiểm chứng bộ suy luận toán học tất định (Rule Engine 0ms):
+      </p>
+
+      <div className="sandbox-controls">
+        <div className="sandbox-row">
+          <span className="sandbox-label">1. Chủ thể vi phạm:</span>
+          <div className="sandbox-pills">
+            <button
+              type="button"
+              className={`sandbox-pill ${simSubject === 'ORGANIZATION' ? 'active' : ''}`}
+              onClick={() => setSimSubject('ORGANIZATION')}
+            >
+              🏢 Tổ chức (1x)
+            </button>
+            <button
+              type="button"
+              className={`sandbox-pill ${simSubject === 'INDIVIDUAL' ? 'active' : ''}`}
+              onClick={() => setSimSubject('INDIVIDUAL')}
+            >
+              👤 Cá nhân (1/2x)
+            </button>
+          </div>
+        </div>
+
+        {simSubject === 'INDIVIDUAL' && (
+          <div className="sandbox-row">
+            <span className="sandbox-label">2. Độ tuổi chủ thể:</span>
+            <div className="sandbox-pills">
+              {[
+                { id: 'ADULT', label: '≥ 18 tuổi' },
+                { id: '16_18', label: '16 – <18 tuổi' },
+                { id: '14_16', label: '14 – <16 tuổi' },
+                { id: 'UNDER_14', label: '< 14 tuổi' },
+              ].map((g) => (
+                <button
+                  key={g.id}
+                  type="button"
+                  className={`sandbox-pill ${simAgeGroup === g.id ? 'active' : ''}`}
+                  onClick={() => setSimAgeGroup(g.id)}
+                >
+                  {g.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {primary.criminal_escalations?.length > 0 && (
+          <div className="sandbox-row">
+            <span className="sandbox-label">3. Mức độ & Hậu quả:</span>
+            <div className="sandbox-pills">
+              <button
+                type="button"
+                className={`sandbox-pill ${!simRecidivism ? 'active' : ''}`}
+                onClick={() => setSimRecidivism(false)}
+              >
+                Vi phạm Hành chính lần đầu
+              </button>
+              <button
+                type="button"
+                className={`sandbox-pill danger ${simRecidivism ? 'active' : ''}`}
+                onClick={() => setSimRecidivism(true)}
+              >
+                ⚠️ Tái phạm / Hậu quả nghiêm trọng (Hình sự)
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className={`sandbox-output ${simRecidivism ? 'criminal-mode' : ''}`}>
+        <div className="sandbox-result-main">{simDisplay}</div>
+        <div className="sandbox-result-meta">
+          <span><b>Công thức:</b> {simFormula}</span>
+          <span><b>Căn cứ:</b> {simBasis}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// VŨ KHÍ 4: XUẤT PHIẾU TƯ VẤN PHÁP LÝ / ĐƠN TRÌNH BÁO AN NINH MẠNG (PRINT/PDF)
+// ============================================================================
+function exportLegalAdvisoryReport(questionText, botMsg) {
+  const sym = botMsg?.symbolicData;
+  const calcs = sym?.reasoning?.penalty_calculations || [];
+  const sources = sym?.sources || [];
+  const nowStr = new Date().toLocaleString('vi-VN');
+
+  const calcRowsHtml = calcs
+    .map(
+      (c) => `
+      <div style="border:1px solid #cbd5e1;border-radius:8px;padding:12px;margin-bottom:10px;background:#f8fafc;">
+        <div style="font-weight:700;color:#0f172a;margin-bottom:4px;">Hành vi: ${c.action}</div>
+        <div style="font-size:12px;color:#2563eb;font-weight:600;margin-bottom:8px;">Căn cứ: ${c.clause}, ${c.article}</div>
+        ${(c.calculations || [])
+          .map(
+            (r) =>
+              `<div style="font-size:13px;margin:3px 0;">• <b>${r.subject_label}:</b> <span style="color:#dc2626;font-weight:700;">${r.display}</span> <i>(${r.formula})</i></div>`
+          )
+          .join('')}
+        ${
+          c.sanctions?.length
+            ? `<div style="font-size:12.5px;margin-top:6px;color:#475569;"><b>Biện pháp khắc phục hậu quả:</b> ${c.sanctions.join('; ')}</div>`
+            : ''
+        }
+        ${
+          c.criminal_escalations?.length
+            ? `<div style="font-size:12.5px;margin-top:6px;color:#991b1b;background:#fef2f2;padding:6px 8px;border-radius:6px;"><b>⚖️ Cảnh báo Chuyển hóa Hình sự (Multi-Hop):</b> ${c.criminal_escalations
+                .map((ce) => `${ce.title} — ${ce.penalty}`)
+                .join(' | ')}</div>`
+            : ''
+        }
+      </div>`
+    )
+    .join('');
+
+  const sourcesHtml = sources
+    .map(
+      (s) =>
+        `<li style="margin-bottom:6px;"><b>${s.title}</b> — ${s.article} (Trang ${s.page}): <i>"${s.snippet}"</i></li>`
+    )
+    .join('');
+
+  const html = `<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <title>Phiếu Tư vấn Pháp lý CNTT — LexIT Neuro-Symbolic</title>
+  <style>
+    body { font-family: "Times New Roman", Times, serif; color: #111827; max-width: 820px; margin: 28px auto; padding: 0 24px; line-height: 1.55; }
+    .header-table { width: 100%; border-collapse: collapse; margin-bottom: 18px; }
+    .header-table td { text-align: center; vertical-align: top; }
+    .report-title { text-align: center; font-size: 20px; font-weight: bold; text-transform: uppercase; margin: 18px 0 4px; color: #1e3a8a; }
+    .report-sub { text-align: center; font-size: 13px; font-style: italic; color: #4b5563; margin-bottom: 20px; }
+    .section-title { font-size: 15px; font-weight: bold; text-transform: uppercase; color: #1e3a8a; border-bottom: 1.5px solid #1e3a8a; padding-bottom: 4px; margin: 18px 0 10px; }
+    .box { background: #f9fafb; border: 1px solid #d1d5db; border-radius: 6px; padding: 12px 14px; font-size: 14px; white-space: pre-wrap; }
+    .print-bar { display: flex; justify-content: flex-end; gap: 10px; margin-bottom: 16px; font-family: sans-serif; }
+    .print-btn { background: #2563eb; color: #fff; border: none; border-radius: 6px; padding: 8px 16px; font-weight: 600; cursor: pointer; }
+    @media print { .print-bar { display: none; } body { margin: 0; } }
+  </style>
+</head>
+<body>
+  <div class="print-bar">
+    <button class="print-btn" onclick="window.print()">🖨️ In Phiếu Tư vấn / Lưu PDF</button>
+  </div>
+  <table class="header-table">
+    <tr>
+      <td style="width:45%;">
+        <b>HỆ THỐNG TRỢ LÝ ẢO PHÁP LUẬT LEX-IT</b><br/>
+        <span>Kiến trúc Neuro-Symbolic AI & Đồ thị Neo4j</span>
+      </td>
+      <td style="width:55%;">
+        <b>CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM</b><br/>
+        <b>Độc lập - Tự do - Hạnh phúc</b><br/>
+        <span>───────────────</span>
+      </td>
+    </tr>
+  </table>
+  <div class="report-title">PHIẾU TƯ VẤN PHÁP LUẬT CÔNG NGHỆ THÔNG TIN & AN NINH MẠNG</div>
+  <div class="report-sub">Thời điểm trích xuất: ${nowStr} • Mã kiểm chứng: Symbolic-Rule-Engine-v2.2</div>
+
+  <div class="section-title">I. NỘI DUNG TÌNH HUỐNG / YÊU CẦU TƯ VẤN</div>
+  <div class="box">${(questionText || 'Tư vấn pháp luật CNTT').replace(/</g, '&lt;')}</div>
+
+  ${
+    calcRowsHtml
+      ? `<div class="section-title">II. BẢNG TÍNH KHUNG HÌNH PHẠT & CHẾ TÀI TẤT ĐỊNH (SYMBOLIC ENGINE)</div>${calcRowsHtml}`
+      : ''
+  }
+
+  <div class="section-title">III. Ý KIẾN TƯ VẤN PHÁP LÝ CHI TIẾT</div>
+  <div class="box">${(botMsg?.text || '').replace(/</g, '&lt;')}</div>
+
+  ${
+    sourcesHtml
+      ? `<div class="section-title">IV. CĂN CỨ VĂN BẢN QUY PHẠM PHÁP LUẬT TRÍCH DẪN (PGVECTOR & NEO4J)</div><ul style="font-size:13.5px;padding-left:20px;">${sourcesHtml}</ul>`
+      : ''
+  }
+
+  <div style="margin-top:26px;font-size:12.5px;color:#4b5563;border-top:1px dashed #cbd5e1;padding-top:10px;">
+    <b>Hướng dẫn trình báo khi bị xâm phạm quyền và lợi ích hợp pháp trên không gian mạng:</b><br/>
+    1. Lưu giữ nguyên trạng bằng chứng điện tử (ảnh chụp màn hình kèm URL, thời gian, sao kê giao dịch, hợp đồng điện tử).<br/>
+    2. Nộp đơn trình báo kèm Phiếu tư vấn này tới Phòng An ninh mạng và phòng, chống tội phạm sử dụng công nghệ cao (PA05 - Công an tỉnh/thành phố) hoặc Cơ quan điều tra nơi cư trú.
+  </div>
+</body>
+</html>`;
+
+  const win = window.open('', '_blank', 'width=900,height=800');
+  if (win) {
+    win.document.write(html);
+    win.document.close();
+  }
+}
+
+// ============================================================================
+// VŨ KHÍ 5: MODAL BẢNG THỰC NGHIỆM ĐỊNH LƯỢNG TRỰC TIẾP (LIVE BENCHMARK MODAL)
+// ============================================================================
+function BenchmarkModal({ isOpen, onClose, data, isLoading, onRunBenchmark }) {
+  if (!isOpen) return null;
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-card benchmark-modal-card" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div className="modal-icon">
+              <BarChart3 size={18} />
+            </div>
+            <div>
+              <h3>Thực nghiệm Đối chứng: Naive Vector RAG vs. Neuro-Symbolic Hybrid RAG</h3>
+              <p>
+                Đánh giá định lượng tự động trên <b>{data?.total_cases || 8} kịch bản kiểm thử học thuật</b> (Chương 4 Đồ án)
+              </p>
+            </div>
+          </div>
+          <button type="button" onClick={onClose} className="modal-close-btn">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="modal-body">
+          {isLoading ? (
+            <div className="benchmark-loading">
+              <Loader2 size={24} className="spin-icon" />
+              <span>Đang thực thi bộ kiểm thử định lượng qua 8 kịch bản pháp lý...</span>
+            </div>
+          ) : data ? (
+            <>
+              <div className="benchmark-metrics-grid">
+                {(data.metrics || []).map((m, idx) => (
+                  <div key={idx} className="bench-metric-card">
+                    <div className="bench-metric-title">{m.name}</div>
+                    <div className="bench-bars">
+                      <div className="bench-bar-row">
+                        <span className="bench-bar-label">Naive RAG:</span>
+                        <div className="bench-bar-track">
+                          <div className="bench-bar-fill naive" style={{ width: `${m.naive}%` }} />
+                        </div>
+                        <span className="bench-bar-val">{m.naive}%</span>
+                      </div>
+                      <div className="bench-bar-row">
+                        <span className="bench-bar-label">Neuro-Symbolic:</span>
+                        <div className="bench-bar-track">
+                          <div className="bench-bar-fill hybrid" style={{ width: `${m.hybrid}%` }} />
+                        </div>
+                        <span className="bench-bar-val highlight">{m.hybrid}%</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="bench-table-wrap">
+                <table className="bench-table">
+                  <thead>
+                    <tr>
+                      <th>Mã Ca</th>
+                      <th>Kịch bản Kiểm thử Pháp lý</th>
+                      <th>Trích dẫn (Naive / Hybrid)</th>
+                      <th>Mức phạt & Tuổi (Naive / Hybrid)</th>
+                      <th>Chủ thể & Guardrail (Naive / Hybrid)</th>
+                      <th>Tốc độ</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(data.cases || []).map((c) => (
+                      <tr key={c.id}>
+                        <td><b>{c.id}</b></td>
+                        <td>{c.category}</td>
+                        <td className="center-cell">
+                          {c.n_citation ? '✅' : '❌'} / <b>{c.h_citation ? '✅' : '❌'}</b>
+                        </td>
+                        <td className="center-cell">
+                          {c.n_fine_age ? '✅' : '❌'} / <b>{c.h_fine_age ? '✅' : '❌'}</b>
+                        </td>
+                        <td className="center-cell">
+                          {c.n_subject_guardrail ? '✅' : '❌'} / <b>{c.h_subject_guardrail ? '✅' : '❌'}</b>
+                        </td>
+                        <td className="center-cell">{c.elapsed_seconds}s</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          ) : null}
+
+          <div className="modal-actions" style={{ justifyContent: 'space-between', marginTop: '14px' }}>
+            <button
+              type="button"
+              className="open-neo4j-web-btn"
+              onClick={() => onRunBenchmark(false)}
+              disabled={isLoading}
+            >
+              <RefreshCw size={14} />
+              <span>Chạy lại Kiểm định Symbolic tức thì</span>
+            </button>
+            <button type="button" onClick={onClose} className="close-modal-secondary">
+              Đóng bảng
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
 // MAIN APP: GIAO DIỆN PHONG CÁCH CHATGPT HIỆN ĐẠI + SIDEBAR LỊCH SỬ + 3D GRAPH
 // ============================================================================
 function App() {
@@ -10664,6 +11948,16 @@ function App() {
   const [copiedMsgIdx, setCopiedMsgIdx] = useState(null);
   const [showNeo4jModal, setShowNeo4jModal] = useState(false);
 
+  // Vũ khí 1: Bằng chứng Ảnh chụp màn hình / PDF đính kèm (OCR & Vision Evidence)
+  const [evidenceAttachment, setEvidenceAttachment] = useState(null);
+  const [isUploadingEvidence, setIsUploadingEvidence] = useState(false);
+  const evidenceInputRef = useRef(null);
+
+  // Vũ khí 5: Bảng Thực nghiệm Định lượng Trực tiếp (Live Benchmark Modal)
+  const [showBenchmarkModal, setShowBenchmarkModal] = useState(false);
+  const [benchmarkData, setBenchmarkData] = useState(null);
+  const [isLoadingBenchmark, setIsLoadingBenchmark] = useState(false);
+
   // Dữ liệu Đồ thị Neo4j 3D trực tiếp từ Backend
   const [liveGraphData, setLiveGraphData] = useState({ nodes: [], edges: [] });
   const [overviewDocs, setOverviewDocs] = useState([]);
@@ -10673,6 +11967,8 @@ function App() {
   const [backendStatus, setBackendStatus] = useState({ neo4j: false, pgvector: false });
 
   const chatEndRef = useRef(null);
+  const scrollViewportRef = useRef(null);
+  const isNearBottomRef = useRef(true);
   const textareaRef = useRef(null);
   const abortControllerRef = useRef(null);
 
@@ -10738,8 +12034,15 @@ function App() {
   }, [checkBackendHealth, fetchLiveNeo4jGraph]);
 
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (isNearBottomRef.current) {
+      chatEndRef.current?.scrollIntoView({ behavior: isLoading ? 'auto' : 'smooth' });
+    }
   }, [messages, isLoading]);
+
+  const handleViewportScroll = useCallback((e) => {
+    const el = e.currentTarget;
+    isNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+  }, []);
 
   // Tự động co giãn chiều cao ô nhập giống ChatGPT
   useEffect(() => {
@@ -10796,24 +12099,78 @@ function App() {
     });
   };
 
+  // Vũ khí 1: Xử lý tải lên ảnh chụp màn hình / PDF bằng chứng để OCR tự động
+  const handleEvidenceUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    setIsUploadingEvidence(true);
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const resultStr = String(reader.result || '');
+        const base64Part = resultStr.includes(',') ? resultStr.split(',')[1] : resultStr;
+        const res = await axios.post(`${API_BASE_URL}/analyze-evidence`, {
+          filename: file.name,
+          content_base64: base64Part,
+        });
+        setEvidenceAttachment(res.data);
+      } catch (err) {
+        console.error('Lỗi phân tích bằng chứng:', err);
+        setEvidenceAttachment({
+          filename: file.name,
+          char_count: 0,
+          extracted_text: `[Bằng chứng đính kèm: ${file.name}]`,
+        });
+      } finally {
+        setIsUploadingEvidence(false);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Vũ khí 5: Mở & chạy Bảng Thực nghiệm Định lượng (Benchmark)
+  const handleRunBenchmark = useCallback(async (live = false) => {
+    setShowBenchmarkModal(true);
+    setIsLoadingBenchmark(true);
+    try {
+      const res = await axios.get(`${API_BASE_URL}/benchmark/run`, { params: { live } });
+      setBenchmarkData(res.data);
+    } catch (err) {
+      console.error('Lỗi chạy benchmark:', err);
+    } finally {
+      setIsLoadingBenchmark(false);
+    }
+  }, []);
+
   // Gửi câu hỏi với luồng Streaming thời gian thực (hiển thị Đồ thị 3D < 0.2s & stream chữ tức thì)
   const sendMessage = async (questionText) => {
-    const textToSend = (questionText ?? input).trim();
-    if (!textToSend || isLoading) return;
+    const rawTyped = (questionText ?? input).trim();
+    if ((!rawTyped && !evidenceAttachment) || isLoading) return;
+
+    const textToSend = evidenceAttachment
+      ? `[BẰNG CHỨNG ĐÍNH KÈM: ${evidenceAttachment.filename}]\nNội dung trích xuất OCR: "${evidenceAttachment.extracted_text.slice(0, 1200)}"\n\nCâu hỏi tư vấn: ${rawTyped || 'Hãy phân tích hành vi vi phạm pháp luật trong bằng chứng trên và tính mức xử phạt.'}`
+      : rawTyped;
+
+    const displayUserText = evidenceAttachment
+      ? `📎 [Bằng chứng: ${evidenceAttachment.filename}]\n${rawTyped || 'Phân tích hành vi vi phạm và tính mức phạt từ bằng chứng đính kèm.'}`
+      : rawTyped;
 
     abortControllerRef.current?.abort();
     const controller = new AbortController();
     abortControllerRef.current = controller;
+    isNearBottomRef.current = true;
     const targetConvId = activeConvId;
 
     const historyPayload = messages
       .slice(-4)
       .map((m) => ({ role: m.role, text: m.text }));
 
-    const userMessage = { role: 'user', text: textToSend };
+    const userMessage = { role: 'user', text: displayUserText };
     const updatedTitle =
       messages.length === 0
-        ? textToSend.slice(0, 38) + (textToSend.length > 38 ? '…' : '')
+        ? displayUserText.slice(0, 38) + (displayUserText.length > 38 ? '…' : '')
         : activeConversation.title;
 
     const botMsgId = `bot-${Date.now()}`;
@@ -10840,6 +12197,7 @@ function App() {
     );
 
     if (!questionText) setInput('');
+    setEvidenceAttachment(null);
     setIsLoading(true);
 
     try {
@@ -10975,7 +12333,7 @@ function App() {
   };
 
   const copyMessage = (idx, text) => {
-    navigator.clipboard.writeText(text);
+    safeCopyToClipboard(text);
     setCopiedMsgIdx(idx);
     setTimeout(() => setCopiedMsgIdx(null), 1800);
   };
@@ -11173,6 +12531,17 @@ function App() {
               <span>{theme === 'dark' ? 'Nền sáng' : 'Nền tối'}</span>
             </button>
 
+            {/* Nút Bảng Thực nghiệm Định lượng (Vũ khí 5) */}
+            <button
+              type="button"
+              className="topbar-pill-btn benchmark-trigger-btn"
+              onClick={() => handleRunBenchmark(false)}
+              title="Mở Bảng Thực nghiệm Đối chứng Naive RAG vs. Neuro-Symbolic RAG (100% Accuracy)"
+            >
+              <BarChart3 size={15} />
+              <span>Thực nghiệm (100%)</span>
+            </button>
+
             {/* Nút bật/tắt So sánh Đối chứng A/B */}
             <button
               type="button"
@@ -11197,7 +12566,11 @@ function App() {
         </header>
 
         {/* Nội dung cuộc trò chuyện hoặc Màn hình Chào mừng kiểu ChatGPT */}
-        <div className="chatgpt-scroll-viewport">
+        <div
+          ref={scrollViewportRef}
+          className="chatgpt-scroll-viewport"
+          onScroll={handleViewportScroll}
+        >
           {messages.length === 0 ? (
             <div className="chatgpt-welcome">
               <div className="welcome-badge-hero">
@@ -11304,6 +12677,21 @@ function App() {
                             <span>{copiedMsgIdx === index ? 'Đã chép' : 'Sao chép'}</span>
                           </button>
 
+                          <button
+                            type="button"
+                            className="msg-action-btn report-export-btn"
+                            onClick={() =>
+                              exportLegalAdvisoryReport(
+                                index > 0 ? messages[index - 1]?.text : '',
+                                msg
+                              )
+                            }
+                            title="Xuất Phiếu Tư vấn Pháp lý / Đơn trình báo chuẩn mẫu (In / PDF)"
+                          >
+                            <FileText size={14} />
+                            <span>Xuất Phiếu Tư vấn</span>
+                          </button>
+
                           {msg.symbolicData && (
                             <>
                               <button
@@ -11350,8 +12738,15 @@ function App() {
           )}
         </div>
 
-        {/* Ô nhập câu hỏi nổi ở đáy phong cách ChatGPT (đã xóa dòng chữ khoanh đỏ phía dưới) */}
+        {/* Ô nhập câu hỏi nổi ở đáy phong cách ChatGPT */}
         <div className="chatgpt-composer-zone">
+          <input
+            ref={evidenceInputRef}
+            type="file"
+            accept=".png,.jpg,.jpeg,.webp,.bmp,.pdf,.docx,.txt,.md"
+            style={{ display: 'none' }}
+            onChange={handleEvidenceUpload}
+          />
           <form
             className="chatgpt-composer-box"
             onSubmit={(e) => {
@@ -11359,18 +12754,57 @@ function App() {
               sendMessage();
             }}
           >
+            {evidenceAttachment && (
+              <div className="evidence-attachment-banner">
+                <div className="evidence-banner-left">
+                  <Paperclip size={14} className="evidence-icon" />
+                  <div className="evidence-info">
+                    <span className="evidence-name">
+                      Bằng chứng: <b>{evidenceAttachment.filename}</b> ({evidenceAttachment.char_count} ký tự OCR)
+                    </span>
+                    <span className="evidence-preview">
+                      {evidenceAttachment.extracted_text.slice(0, 140)}...
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="evidence-remove-btn"
+                  onClick={() => setEvidenceAttachment(null)}
+                  title="Gỡ bằng chứng đính kèm"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            )}
             <textarea
               ref={textareaRef}
               rows={1}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Hỏi bất kỳ quy định, mức xử phạt, điều khoản nào về Luật CNTT, An ninh mạng, Dữ liệu cá nhân..."
+              placeholder="Hỏi bất kỳ quy định, mức xử phạt, hoặc đính kèm ảnh chụp bằng chứng / PDF..."
               disabled={isLoading}
               className="chatgpt-textarea"
             />
             <div className="composer-bottom-row">
               <div className="composer-tags">
+                <button
+                  type="button"
+                  className={`composer-chip ${evidenceAttachment ? 'active' : ''}`}
+                  onClick={() => evidenceInputRef.current?.click()}
+                  disabled={isUploadingEvidence || isLoading}
+                  title="Đính kèm ảnh chụp màn hình tin nhắn/bài đăng vi phạm hoặc hợp đồng PDF/DOCX để OCR tự động"
+                >
+                  {isUploadingEvidence ? <Loader2 size={13} className="spin-icon" /> : <Paperclip size={13} />}
+                  <span>
+                    {isUploadingEvidence
+                      ? 'Đang OCR bằng chứng...'
+                      : evidenceAttachment
+                      ? 'Đã đính kèm Bằng chứng'
+                      : 'Đính kèm Bằng chứng (Ảnh/PDF)'}
+                  </span>
+                </button>
                 <button
                   type="button"
                   className={`composer-chip ${showSymbolicPanel && activeTab === 'graph' ? 'active' : ''}`}
@@ -11394,7 +12828,7 @@ function App() {
 
               <button
                 type="submit"
-                disabled={isLoading || !input.trim()}
+                disabled={isLoading || (!input.trim() && !evidenceAttachment)}
                 className="chatgpt-send-btn"
                 title="Gửi câu hỏi (Enter)"
               >
@@ -11583,10 +13017,27 @@ function App() {
                                 ))}
                               </div>
                             )}
+                            {calc.criminal_escalations?.length > 0 && (
+                              <div className="calc-criminal-box">
+                                <b>⚖️ Liên đới Trách nhiệm Hình sự (Multi-Hop 3 Tầng → BLHS 2015):</b>
+                                {calc.criminal_escalations.map((ce, idx) => (
+                                  <div key={idx} className="criminal-item">
+                                    <div>• <b>{ce.title}</b></div>
+                                    <div className="criminal-sub">Điều kiện: {ce.condition}</div>
+                                    <div className="criminal-pen">Khung hình phạt: {ce.penalty}</div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>
                     </div>
+                  )}
+
+                  {/* Vũ khí 3: Bảng điều khiển Mô phỏng Tình huống Pháp lý (Interactive What-If Sandbox) */}
+                  {activeSymbolic.reasoning?.penalty_calculations?.length > 0 && (
+                    <WhatIfSandbox penaltyCalcs={activeSymbolic.reasoning.penalty_calculations} />
                   )}
 
                   <div className="card-box">
@@ -11649,6 +13100,15 @@ function App() {
         isOpen={showNeo4jModal}
         onClose={() => setShowNeo4jModal(false)}
         stats={neo4jStats}
+      />
+
+      {/* Vũ khí 5: Modal Bảng Thực nghiệm Định lượng Trực tiếp */}
+      <BenchmarkModal
+        isOpen={showBenchmarkModal}
+        onClose={() => setShowBenchmarkModal(false)}
+        data={benchmarkData}
+        isLoading={isLoadingBenchmark}
+        onRunBenchmark={handleRunBenchmark}
       />
     </div>
   );

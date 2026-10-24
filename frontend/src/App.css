@@ -2222,3 +2222,336 @@ textarea:focus-visible {
 .chatgpt-app.dark-theme .starter-card:hover {
   box-shadow: 0 8px 20px -8px rgba(96, 165, 250, 0.35);
 }
+
+
+/* ==========================================================================
+   9. 5 VŨ KHÍ NÂNG CẤP (OCR EVIDENCE, MULTI-HOP CRIMINAL, WHAT-IF SANDBOX,
+      PHIẾU TƯ VẤN PDF, LIVE BENCHMARK MODAL)
+   ========================================================================== */
+.evidence-attachment-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  border-radius: 10px;
+  background: var(--accent-blue-soft);
+  border: 1px solid rgba(37, 99, 235, 0.3);
+}
+
+.evidence-banner-left {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.evidence-icon {
+  color: var(--accent-blue);
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.evidence-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.evidence-name {
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.evidence-preview {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 520px;
+}
+
+.evidence-remove-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+}
+
+.evidence-remove-btn:hover {
+  color: var(--accent-danger);
+  background: rgba(220, 38, 38, 0.1);
+}
+
+/* Hộp cảnh báo liên đới Hình sự Multi-Hop 3 tầng */
+.calc-criminal-box {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(220, 38, 38, 0.07);
+  border: 1px solid rgba(220, 38, 38, 0.28);
+  color: #b91c1c;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.criminal-item {
+  margin-top: 5px;
+  padding-top: 4px;
+  border-top: 1px dashed rgba(220, 38, 38, 0.2);
+}
+
+.criminal-sub {
+  font-size: 11px;
+  opacity: 0.9;
+  margin-top: 2px;
+}
+
+.criminal-pen {
+  font-size: 11px;
+  font-weight: 700;
+  margin-top: 2px;
+}
+
+/* Bảng điều khiển Mô phỏng Tình huống (What-If Sandbox) */
+.sandbox-box {
+  border: 1px solid rgba(124, 58, 237, 0.35);
+  background: linear-gradient(180deg, var(--accent-purple-soft), var(--bg-main));
+}
+
+.sandbox-sub {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  margin: 0 0 10px 0;
+}
+
+.sandbox-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sandbox-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.sandbox-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.sandbox-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sandbox-pill {
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-medium);
+  background: var(--bg-main);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.sandbox-pill:hover {
+  border-color: var(--accent-purple);
+  color: var(--text-primary);
+}
+
+.sandbox-pill.active {
+  background: var(--accent-purple);
+  border-color: var(--accent-purple);
+  color: #ffffff;
+}
+
+.sandbox-pill.danger.active {
+  background: #dc2626;
+  border-color: #dc2626;
+  color: #ffffff;
+}
+
+.sandbox-output {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--bg-main);
+  border: 1px solid var(--border-light);
+}
+
+.sandbox-output.criminal-mode {
+  background: rgba(220, 38, 38, 0.08);
+  border-color: rgba(220, 38, 38, 0.35);
+}
+
+.sandbox-result-main {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--accent-blue);
+  margin-bottom: 4px;
+}
+
+.sandbox-output.criminal-mode .sandbox-result-main {
+  color: #dc2626;
+}
+
+.sandbox-result-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+/* Nút Thực nghiệm & Modal Bảng Thực nghiệm Định lượng */
+.benchmark-trigger-btn {
+  border-color: rgba(16, 185, 129, 0.45);
+  color: #059669;
+  background: rgba(16, 185, 129, 0.08);
+}
+
+.benchmark-trigger-btn:hover {
+  background: rgba(16, 185, 129, 0.16);
+  border-color: #10b981;
+}
+
+.benchmark-modal-card {
+  max-width: 860px;
+  width: 94%;
+}
+
+.benchmark-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 36px 16px;
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.benchmark-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.bench-metric-card {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-light);
+  background: var(--bg-subtle);
+}
+
+.bench-metric-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.bench-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bench-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+}
+
+.bench-bar-label {
+  width: 92px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.bench-bar-track {
+  flex: 1;
+  height: 8px;
+  background: var(--border-light);
+  border-radius: 99px;
+  overflow: hidden;
+}
+
+.bench-bar-fill.naive {
+  height: 100%;
+  background: #f59e0b;
+  border-radius: 99px;
+}
+
+.bench-bar-fill.hybrid {
+  height: 100%;
+  background: linear-gradient(90deg, #2563eb, #10b981);
+  border-radius: 99px;
+}
+
+.bench-bar-val {
+  width: 42px;
+  text-align: right;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.bench-bar-val.highlight {
+  color: #059669;
+  font-weight: 700;
+}
+
+.bench-table-wrap {
+  max-height: 290px;
+  overflow-y: auto;
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+}
+
+.bench-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.bench-table th,
+.bench-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-light);
+  text-align: left;
+}
+
+.bench-table th {
+  background: var(--bg-subtle);
+  font-weight: 700;
+  color: var(--text-primary);
+  position: sticky;
+  top: 0;
+}
+
+.bench-table .center-cell {
+  text-align: center;
+}
+
+.chatgpt-app.dark-theme .calc-criminal-box {
+  background: rgba(220, 38, 38, 0.14);
+  border-color: rgba(248, 113, 113, 0.35);
+  color: #fca5a5;
+}
+
+.chatgpt-app.dark-theme .benchmark-trigger-btn {
+  color: #34d399;
+  background: rgba(16, 185, 129, 0.14);
+}

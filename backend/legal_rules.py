@@ -393,3 +393,74 @@ def apply_penalty_rules(
         })
 
     return {"base_subject": base_subject, "results": results, "steps": [asdict(s) for s in steps]}
+
+
+# ---------------------------------------------------------------------------
+# Suy luận Đa chặng 3 Tầng (Multi-Hop Legal Graph: Quy phạm -> Hành chính -> Hình sự)
+# ---------------------------------------------------------------------------
+def infer_criminal_escalation(doc_code: str, article_number: int, action_name: str = "") -> list[dict]:
+    """Ánh xạ liên đới từ vi phạm hành chính / quy phạm CNTT sang Bộ luật Hình sự 2015 (sửa đổi 2017)."""
+    act_low = (action_name or "").lower()
+    escalations: list[dict] = []
+
+    if (doc_code == "15/2020/NĐ-CP" and article_number in (99, 100, 101)) or (
+        doc_code in ("24/2018/QH14", "116/2025/QH15") and article_number == 8
+    ) or any(k in act_low for k in ("sai sự thật", "xúc phạm", "vu khống", "bịa đặt", "nhân phẩm", "danh dự")):
+        escalations.append({
+            "code": "100/2015/QH13",
+            "article": 288,
+            "title": "Điều 288 BLHS 2015 (sửa đổi 2017) — Tội đưa hoặc sử dụng trái phép thông tin mạng máy tính, mạng viễn thông",
+            "condition": "Khi thu lợi bất chính ≥ 50.000.000đ, gây thiệt hại ≥ 100.000.000đ hoặc gây dư luận xấu làm giảm uy tín của cơ quan, tổ chức, cá nhân",
+            "penalty": "Phạt tiền từ 30.000.000đ đến 1.000.000.000đ hoặc phạt tù từ 06 tháng đến 07 năm.",
+        })
+        if any(k in act_low for k in ("xúc phạm", "nhân phẩm", "danh dự", "vu khống", "bịa đặt")) or article_number == 101:
+            escalations.append({
+                "code": "100/2015/QH13",
+                "article": 156,
+                "title": "Điều 155 & Điều 156 BLHS 2015 — Tội làm nhục người khác / Tội vu khống (sử dụng mạng máy tính, viễn thông)",
+                "condition": "Xúc phạm nghiêm trọng nhân phẩm, danh dự hoặc bịa đặt loan truyền thông tin sai sự thật qua mạng xã hội (tình tiết định khung tăng nặng Điểm e Khoản 2)",
+                "penalty": "Phạt tù từ 03 tháng đến 05 năm (Điều 155) hoặc từ 01 năm đến 07 năm (Điều 156).",
+            })
+
+    if (doc_code == "15/2020/NĐ-CP" and article_number in (80, 104)) or any(
+        k in act_low for k in ("xâm nhập", "mã độc", "tấn công", "cản trở", "virus")
+    ):
+        escalations.append({
+            "code": "100/2015/QH13",
+            "article": 289,
+            "title": "Điều 286, 287 & 289 BLHS 2015 — Tội phát tán chương trình tin học gây hại / Xâm nhập trái phép vào mạng máy tính, viễn thông",
+            "condition": "Cố ý vượt qua cảnh báo, mã truy cập, tường lửa để chiếm quyền điều khiển, lấy cắp dữ liệu hoặc làm tê liệt hệ thống thông tin",
+            "penalty": "Phạt tiền từ 50.000.000đ đến 1.000.000.000đ hoặc phạt tù từ 01 năm đến 12 năm.",
+        })
+
+    if (
+        (doc_code == "15/2020/NĐ-CP" and article_number in (84, 102))
+        or doc_code in ("13/2023/NĐ-CP", "91/2025/QH15", "60/2024/QH15")
+        or any(k in act_low for k in ("dữ liệu cá nhân", "thông tin riêng", "mua bán dữ liệu", "lừa đảo", "chiếm đoạt"))
+    ):
+        escalations.append({
+            "code": "100/2015/QH13",
+            "article": 288,
+            "title": "Điều 288 & Điều 290 BLHS 2015 — Mua bán trái phép dữ liệu cá nhân / Sử dụng mạng máy tính chiếm đoạt tài sản",
+            "condition": "Mua bán, trao đổi công khai trái phép dữ liệu cá nhân hoặc sử dụng phương tiện điện tử để lừa đảo, chiếm đoạt tài sản ≥ 2.000.000đ",
+            "penalty": "Phạt tù từ 06 tháng đến 07 năm (Điều 288) hoặc đến 20 năm tù (Điều 290).",
+        })
+
+    if doc_code == "15/2020/NĐ-CP" and article_number == 106:
+        escalations.append({
+            "code": "100/2015/QH13",
+            "article": 290,
+            "title": "Điều 290 & Điều 321 BLHS 2015 — Chiếm đoạt tài sản qua mạng / Đánh bạc trái phép qua trò chơi điện tử",
+            "condition": "Lợi dụng trò chơi điện tử để chiếm đoạt tài sản của người chơi khác (≥ 2.000.000đ) hoặc đổi thưởng tiền thật trái phép (≥ 5.000.000đ)",
+            "penalty": "Phạt cải tạo không giam giữ đến 03 năm hoặc phạt tù từ 06 tháng đến 07 năm.",
+        })
+
+    # Khử trùng lặp theo số Điều BLHS
+    seen = set()
+    unique: list[dict] = []
+    for item in escalations:
+        if item["article"] not in seen:
+            seen.add(item["article"])
+            unique.append(item)
+    return unique
+
