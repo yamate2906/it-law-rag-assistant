@@ -603,20 +603,6 @@ def query_knowledge_graph(
                     "criminal_escalations": crim_escalations,
                 })
                 rule_steps.extend(calc["steps"])
-                for ce in crim_escalations:
-                    rule_steps.append({
-                        "rule": "MULTI_HOP_CRIMINAL_ESCALATION",
-                        "basis": "Bộ luật Hình sự 2015 (sửa đổi 2017 - 100/2015/QH13)",
-                        "detail": f"{ce['title']} — {ce['condition']} -> {ce['penalty']}",
-                    })
-                    crim_node_id = f"crim:100/2015/QH13:{ce['article']}"
-                    add_node(
-                        crim_node_id,
-                        f"BLHS Điều {ce['article']}",
-                        "Sanction",
-                        {"title": ce["title"], "full_name": f"{ce['condition']} | Khung hình phạt: {ce['penalty']}"},
-                    )
-                    add_edge(act_node_id, crim_node_id, "ESCALATES_TO_CRIMINAL")
 
                 pen_node_id = f"pen:{row['action_id']}"
                 pen_label = "Phạt: " + " | ".join(
@@ -626,6 +612,22 @@ def query_knowledge_graph(
                     pen_label = calc["results"][0]["display"]
                 add_node(pen_node_id, pen_label[:65], "Penalty", {"calc": calc["results"]})
                 add_edge(act_node_id, pen_node_id, "PENALIZED_BY")
+
+            # Bổ sung Node & Rule Step Liên đới Hình sự Multi-Hop 3 tầng cho cả Nghị định lẫn các Luật
+            for ce in crim_escalations:
+                rule_steps.append({
+                    "rule": "MULTI_HOP_CRIMINAL_ESCALATION",
+                    "basis": "Bộ luật Hình sự 2015 (sửa đổi 2017 - 100/2015/QH13)",
+                    "detail": f"{ce['title']} — {ce['condition']} -> {ce['penalty']}",
+                })
+                crim_node_id = f"crim:100/2015/QH13:{ce['article']}"
+                add_node(
+                    crim_node_id,
+                    f"BLHS Điều {ce['article']}",
+                    "Sanction",
+                    {"title": ce["title"], "full_name": f"{ce['condition']} | Khung hình phạt: {ce['penalty']}"},
+                )
+                add_edge(act_node_id, crim_node_id, "ESCALATES_TO_CRIMINAL")
 
             # Bổ sung Node Biện pháp khắc phục / Hình thức phạt bổ sung lên đồ thị
             if clean_sanctions:
@@ -652,6 +654,7 @@ def query_knowledge_graph(
                 "sanctions": clean_sanctions,
                 "conditions": clean_conditions,
                 "ref_articles": ref_articles,
+                "criminal_escalations": crim_escalations,
             })
 
         # Nếu dùng Tầng 5 (Fallback từ Article/Clause), dựng các Node LegalDoc -> Article -> Clause
@@ -988,11 +991,124 @@ def graph_overview(doc_code: str | None = None, limit: int = 110):
         raise HTTPException(status_code=500, detail=f"Không thể truy vấn đồ thị Neo4j: {exc}") from exc
 
 
+# Từ khóa nhận diện lĩnh vực Pháp luật, CNTT, An ninh mạng, MXH, Dữ liệu, Giao dịch điện tử & Hành vi vi phạm
+_DOMAIN_RELEVANCE_PATTERN = re.compile(
+    r"\b("
+    r"luật|nghị định|thông tư|bộ luật|điều|khoản|điểm|quy định|pháp luật|pháp lý|"
+    r"vi phạm|xử phạt|phạt|mức phạt|cảnh cáo|tịch thu|đình chỉ|tước quyền|thu hồi|"
+    r"khắc phục|hậu quả|bồi thường|trách nhiệm|hình sự|hành chính|dân sự|tội|bị cấm|nghiêm cấm|"
+    r"trái phép|hợp pháp|bất hợp pháp|khiếu nại|tố cáo|khởi kiện|tòa án|công an|cơ quan|thẩm quyền|"
+    r"giấy phép|đăng ký|chứng thực|chữ ký số|hợp đồng|thỏa thuận|cam kết|nghĩa vụ|quyền lợi|"
+    r"mạng|internet|website|trang web|facebook|zalo|tiktok|youtube|telegram|instagram|threads|fanpage|group|"
+    r"tài khoản|account|mật khẩu|password|otp|đăng nhập|đăng tải|đăng bài|đăng tin|chia sẻ|share|"
+    r"bình luận|comment|livestream|tin nhắn|nhắn tin|sms|email|thư điện tử|rác|spam|quảng cáo|"
+    r"bán hàng|thương mại điện tử|shopee|lazada|tiki|giao dịch|điện tử|chuyển khoản|ngân hàng|ví điện tử|"
+    r"lừa đảo|chiếm đoạt|hack|hacker|tấn công|ddos|virus|mã độc|ransomware|phần mềm|ứng dụng|app|"
+    r"game|trò chơi|người chơi|dữ liệu|cá nhân|thông tin|bí mật|riêng tư|bảo mật|an toàn|an ninh|"
+    r"máy tính|server|máy chủ|tên miền|domain|viễn thông|sim|số điện thoại|cuộc gọi|tần số|vô tuyến|"
+    r"bưu chính|bản quyền|sở hữu trí tuệ|trí tuệ nhân tạo|deepfake|công nghệ|số hóa|chuyển đổi số|"
+    r"báo chí|xuất bản|sai sự thật|bịa đặt|vu khống|xúc phạm|nhục mạ|bôi nhọ|danh dự|nhân phẩm|uy tín|"
+    r"chửi|đe dọa|tống tiền|uy hiếp|cưỡng đoạt|đánh bạc|cá độ|mại dâm|khiêu dâm|đồi trụy|bạo lực|"
+    r"mê tín|chống phá|xuyên tạc|bản đồ|chủ quyền|giả mạo|mạo danh|nặc danh|cắt ghép|chỉnh sửa|"
+    r"tiết lộ|mua bán|thu thập|trái ý muốn|không đồng ý|chưa xin phép|ghi âm|quay lén|phát tán|tung tin"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_EVIDENCE_BLOCK_RE = re.compile(
+    r"^\[BẰNG CHỨNG ĐÍNH KÈM:\s*(?P<filename>[^\]]+)\]\s*"
+    r"Nội dung trích xuất OCR:\s*\"(?P<ocr>[\s\S]*?)\"\s*"
+    r"Câu hỏi tư vấn:\s*(?P<user_q>[\s\S]*)$",
+    re.IGNORECASE,
+)
+
+_DEFAULT_EVIDENCE_PROMPT = "Hãy phân tích hành vi vi phạm pháp luật trong bằng chứng trên và tính mức xử phạt."
+
+
+def _has_domain_relevance(text: str, facts: QueryFacts | None = None) -> bool:
+    """Kiểm tra văn bản hoặc câu hỏi có chứa dấu hiệu liên quan đến pháp luật / CNTT / hành vi vi phạm không."""
+    clean = (text or "").strip()
+    if not clean:
+        return False
+    if facts is None:
+        facts = analyze_question(clean)
+    if facts.article_refs or facts.doc_hints or facts.invalid_docs or facts.out_of_scope_docs:
+        return True
+    return bool(_DOMAIN_RELEVANCE_PATTERN.search(clean))
+
+
 def _prepare_retrieval_bundle(request: ChatRequest) -> dict[str, Any]:
     """Thực thi nhanh bước NLU + Guardrail + Truy vấn song song PGVector/SQL + Neo4j (< 150ms)."""
-    question = request.question.strip()
-    if not question:
+    raw_question = request.question.strip()
+    if not raw_question:
         raise HTTPException(status_code=400, detail="Câu hỏi không được để trống.")
+
+    # Bóc tách khối [BẰNG CHỨNG ĐÍNH KÈM: ...] (nếu người dùng gửi kèm file/ảnh)
+    ev_match = _EVIDENCE_BLOCK_RE.match(raw_question)
+    if ev_match:
+        ev_filename = ev_match.group("filename").strip()
+        ev_ocr_raw = ev_match.group("ocr").strip()
+        ev_user_q = ev_match.group("user_q").strip()
+        # Loại bỏ các dòng thông báo hệ thống cũ nếu có
+        if ev_ocr_raw.startswith("[Ảnh chụp/Tài liệu bằng chứng") or ev_ocr_raw.startswith("[Bằng chứng đính kèm:"):
+            ev_ocr_raw = ""
+        is_default_prompt = (not ev_user_q) or (ev_user_q == _DEFAULT_EVIDENCE_PROMPT)
+        user_custom_q = "" if is_default_prompt else ev_user_q
+
+        ocr_words = re.findall(r"[a-zA-ZÀ-ỹ]{2,}", ev_ocr_raw)
+        ocr_facts = analyze_question(ev_ocr_raw) if ev_ocr_raw else analyze_question("")
+        ocr_is_valid = len(ocr_words) >= 4 and _has_domain_relevance(ev_ocr_raw, ocr_facts)
+
+        custom_q_facts = analyze_question(user_custom_q) if user_custom_q else analyze_question("")
+        custom_q_is_valid = bool(user_custom_q) and _has_domain_relevance(user_custom_q, custom_q_facts)
+
+        # GUARDRAIL 3A: Chặn ảnh / bằng chứng không có chữ hoặc không liên quan đến pháp luật CNTT
+        if not ocr_is_valid and not custom_q_is_valid:
+            if len(ocr_words) < 4:
+                reason_detail = (
+                    f"Hệ thống OCR không tìm thấy văn bản hợp lệ trong tệp **`{ev_filename}`** "
+                    f"(ảnh chụp thông thường, ảnh phong cảnh/chân dung/đồ vật không có chữ, hoặc ảnh quá mờ)."
+                )
+            else:
+                preview_txt = ev_ocr_raw[:160] + ("..." if len(ev_ocr_raw) > 160 else "")
+                reason_detail = (
+                    f"Nội dung trích xuất từ tệp **`{ev_filename}`** (*\"{preview_txt}\"*) "
+                    f"không chứa dấu hiệu hành vi vi phạm hay quy định thuộc lĩnh vực Pháp luật CNTT, An ninh mạng, Mạng xã hội hoặc Giao dịch điện tử."
+                )
+
+            guardrail_answer = (
+                f"⚠️ **CẢNH BÁO KIỂM DUYỆT BẰNG CHỨNG: HÌNH ẢNH / TÀI LIỆU KHÔNG LIÊN QUAN**\n\n"
+                f"{reason_detail}\n\n"
+                f"**Nguyên tắc Chống Ảo giác (Anti-Hallucination Guardrail):**\n"
+                f"- Hệ thống **từ chối tự suy diễn hành vi vi phạm hoặc áp đặt mức xử phạt** khi bằng chứng đính kèm không có nội dung văn bản pháp lý / vi phạm rõ ràng.\n\n"
+                f"**Hướng dẫn sử dụng tính năng Đính kèm Bằng chứng:**\n"
+                f"1. **Ảnh chụp màn hình hợp lệ:** Tin nhắn lừa đảo, bình luận xúc phạm danh dự, bài đăng tung tin giả trên MXH (Facebook, Zalo, TikTok), thông báo rò rỉ dữ liệu...\n"
+                f"2. **Tài liệu hợp lệ:** Hợp đồng điện tử, văn bản thông báo xử phạt, điều khoản dịch vụ (`.pdf`, `.docx`, `.txt`).\n"
+                f"3. Hoặc bạn có thể **nhập trực tiếp câu hỏi / mô tả tình huống cụ thể** vào ô chat để hệ thống tra cứu chính xác."
+            )
+            return {
+                "early_response": {
+                    "answer": guardrail_answer,
+                    "naive_answer": guardrail_answer if request.comparison_mode else None,
+                    "symbolic_reasoning": {
+                        "facts": ocr_facts.to_dict(),
+                        "matched_actions": [],
+                        "penalty_calculations": [],
+                        "rule_steps": [{
+                            "rule": "INVALID_EVIDENCE_GUARDRAIL",
+                            "basis": "Kiểm duyệt Bằng chứng Đầu vào (OCR & Domain Filter)",
+                            "detail": f"Từ chối suy diễn pháp lý vì tệp '{ev_filename}' không chứa văn bản vi phạm hợp lệ ({len(ocr_words)} từ).",
+                        }],
+                    },
+                    "graph_view": {"nodes": [], "edges": []},
+                    "sources": [],
+                }
+            }
+
+        # Chỉ dùng nội dung OCR thực tế + câu hỏi thực của người dùng để tìm kiếm (tuyệt đối không đưa từ khóa khuôn mẫu vào Neo4j)
+        question = "\n".join(part for part in [ev_ocr_raw, user_custom_q] if part).strip()
+    else:
+        question = raw_question
 
     contextual_question = question
     if request.history:
@@ -1009,18 +1125,21 @@ def _prepare_retrieval_bundle(request: ChatRequest) -> dict[str, Any]:
         re.IGNORECASE,
     )
     ft_keywords = [k for k in _sanitize_fulltext_query(question).split("OR") if k.strip()]
-    is_followup = bool(followup_markers.search(question)) or len(ft_keywords) <= 2
+    is_followup = bool(followup_markers.search(question)) or (
+        len(ft_keywords) <= 2 and (_has_domain_relevance(question, facts) or facts.age is not None or bool(facts.subjects))
+    )
 
     if request.history and not facts.invalid_docs and is_followup:
         last_user_turns = [h.text for h in request.history if h.role == "user"]
         if last_user_turns:
             prev_q = last_user_turns[-1]
             prev_facts = analyze_question(prev_q)
-            if not facts.article_refs and prev_facts.article_refs:
-                facts.article_refs = prev_facts.article_refs
-            if not facts.doc_hints and prev_facts.doc_hints:
-                facts.doc_hints = prev_facts.doc_hints
-            search_query_text = f"{prev_q} {question}"
+            if _has_domain_relevance(prev_q, prev_facts):
+                if not facts.article_refs and prev_facts.article_refs:
+                    facts.article_refs = prev_facts.article_refs
+                if not facts.doc_hints and prev_facts.doc_hints:
+                    facts.doc_hints = prev_facts.doc_hints
+                search_query_text = f"{prev_q} {question}"
 
     # GUARDRAIL 1: Phát hiện văn bản KHÔNG TỒN TẠI (ví dụ: Nghị định 9999/2025/NĐ-CP)
     if facts.invalid_docs:
@@ -1062,7 +1181,7 @@ def _prepare_retrieval_bundle(request: ChatRequest) -> dict[str, Any]:
         }
 
     # GUARDRAIL 2: Phát hiện văn bản ngoài phạm vi chuyên ngành CNTT (ví dụ: Nghị định 100 giao thông)
-    if facts.out_of_scope_docs and not facts.article_refs and not _sanitize_fulltext_query(question):
+    if facts.out_of_scope_docs and not facts.doc_hints and not facts.article_refs:
         out_name = ", ".join(facts.out_of_scope_docs)
         guardrail_answer = (
             f"ℹ️ **THÔNG BÁO PHẠM VI TƯ VẤN:**\n\n"
@@ -1086,6 +1205,37 @@ def _prepare_retrieval_bundle(request: ChatRequest) -> dict[str, Any]:
                         "rule": "OUT_OF_SCOPE_GUARDRAIL",
                         "basis": "Phạm vi dữ liệu Đồ án",
                         "detail": f"Văn bản '{out_name}' nằm ngoài phạm vi chuyên môn CNTT & An ninh mạng.",
+                    }],
+                },
+                "graph_view": {"nodes": [], "edges": []},
+                "sources": [],
+            }
+        }
+
+    # GUARDRAIL 3B: Chặn các câu giao tiếp / tán gẫu ngoài lề không có nội dung pháp luật hay CNTT (VD: "trời nắng đẹp")
+    if not is_followup and not _has_domain_relevance(search_query_text, facts):
+        guardrail_answer = (
+            f"ℹ️ **THÔNG BÁO PHẠM VI TƯ VẤN PHÁP LUẬT CNTT:**\n\n"
+            f"Nội dung bạn vừa nhập (*\"{question[:120]}\"*) không chứa tình huống pháp lý hoặc câu hỏi thuộc lĩnh vực **Pháp luật Công nghệ thông tin, An ninh mạng & Dữ liệu số**.\n\n"
+            f"Tôi là **Trợ lý ảo LexIT Neuro-Symbolic**, chuyên giải đáp chính xác các vấn đề:\n"
+            f"- **Xử phạt vi phạm hành chính trên Mạng xã hội, Internet & Viễn thông** (*Nghị định 15/2020/NĐ-CP, Nghị định 14/2022/NĐ-CP, Nghị định 147/2024/NĐ-CP*).\n"
+            f"- **An ninh mạng & An toàn thông tin** (*Luật An ninh mạng 2018, Luật An toàn thông tin mạng 2015*).\n"
+            f"- **Bảo vệ dữ liệu cá nhân, AI & Giao dịch điện tử** (*Nghị định 13/2023/NĐ-CP, Luật Bảo vệ DLCN 2025, Luật Trí tuệ nhân tạo 2025*).\n"
+            f"- **Định lượng mức phạt theo Chủ thể (Tổ chức / Cá nhân), Độ tuổi & Cảnh báo chuyển hóa Hình sự** (*BLHS 2015*).\n\n"
+            f"👉 *Hãy đặt một câu hỏi pháp lý cụ thể (ví dụ: \"Đăng tin sai sự thật lên Facebook bị phạt bao nhiêu tiền?\") để tôi tra cứu và suy luận cho bạn.*"
+        )
+        return {
+            "early_response": {
+                "answer": guardrail_answer,
+                "naive_answer": guardrail_answer if request.comparison_mode else None,
+                "symbolic_reasoning": {
+                    "facts": facts.to_dict(),
+                    "matched_actions": [],
+                    "penalty_calculations": [],
+                    "rule_steps": [{
+                        "rule": "IRRELEVANT_QUERY_GUARDRAIL",
+                        "basis": "Bộ lọc Ngữ nghĩa Đầu vào (Domain Relevance Filter)",
+                        "detail": f"Chặn truy vấn ngoài lề '{question[:80]}' vì không liên quan đến Pháp luật hay CNTT.",
                     }],
                 },
                 "graph_view": {"nodes": [], "edges": []},
@@ -1161,6 +1311,11 @@ def _prepare_retrieval_bundle(request: ChatRequest) -> dict[str, Any]:
             )
             if act.get("sanctions"):
                 symbolic_summary_lines.append(f"  + Chế tài/Biện pháp: {'; '.join(act['sanctions'])}")
+            if act.get("criminal_escalations"):
+                for ce in act["criminal_escalations"]:
+                    symbolic_summary_lines.append(
+                        f"  + [Cảnh báo Chuyển hóa Hình sự - Multi-Hop 3 Tầng]: {ce['title']} ({ce['condition']} -> {ce['penalty']})"
+                    )
 
     if graph_result["rule_steps"]:
         symbolic_summary_lines.append("\nCĂN CỨ NGUYÊN TẮC SUY LUẬN (RULE TRACE):")
@@ -1392,23 +1547,33 @@ async def analyze_evidence_endpoint(req: EvidenceRequest):
         try:
             pages = _read_pages(tmp_path)
             return normalize_text("\n".join(p for p in pages if p and p.strip()))
-        except Exception as err:
-            return f"[Bằng chứng đính kèm: {req.filename} ({len(raw_bytes) // 1024} KB) — Lưu ý OCR: {err}]"
+        except Exception:
+            return ""
         finally:
             try:
                 tmp_path.unlink(missing_ok=True)
             except Exception:
                 pass
 
-    extracted = await asyncio.to_thread(_extract_sync)
-    if not extracted.strip():
-        extracted = f"[Ảnh chụp/Tài liệu bằng chứng '{req.filename}' ({len(raw_bytes) // 1024} KB)]"
+    extracted = (await asyncio.to_thread(_extract_sync)).strip()
+    ocr_words = re.findall(r"[a-zA-ZÀ-ỹ]{2,}", extracted)
+    detected_facts = analyze_question(extracted) if extracted else analyze_question("")
+    is_valid_evidence = len(ocr_words) >= 4 and _has_domain_relevance(extracted, detected_facts)
 
-    detected_facts = analyze_question(extracted)
+    rejection_reason = None
+    if not is_valid_evidence:
+        if len(ocr_words) < 4:
+            rejection_reason = "Ảnh/tài liệu không chứa văn bản đọc được (OCR không tìm thấy nội dung chữ)."
+        else:
+            rejection_reason = "Nội dung trong ảnh không có dấu hiệu liên quan đến Pháp luật CNTT, An ninh mạng hay Mạng xã hội."
+
     return {
         "filename": req.filename,
         "char_count": len(extracted),
+        "word_count": len(ocr_words),
         "extracted_text": extracted[:3000],
+        "is_valid_evidence": is_valid_evidence,
+        "rejection_reason": rejection_reason,
         "facts": detected_facts.to_dict(),
     }
 
@@ -1441,12 +1606,25 @@ async def run_benchmark_api(live: bool = False):
             naive_eval = evaluate_answer(n_ans, case)
             elapsed = round(time.time() - t0, 2)
         else:
-            # Chạy kiểm định trực tiếp qua khối Symbolic Rule Engine + Retrieval (< 0.05s/ca)
+            # Chạy kiểm định trực tiếp trên dữ liệu thực tế từ _prepare_retrieval_bundle(req) (< 0.05s/ca)
+            from evaluate_benchmark import _has_citations
+
             req = ChatRequest(question=case["question"], comparison_mode=False)
             bundle = await asyncio.to_thread(_prepare_retrieval_bundle, req)
             elapsed = round(time.time() - t0, 2)
-            # Neuro-Symbolic luôn có đầy đủ Rule Engine + Guardrail + Citations
-            hybrid_eval = (True, True, True)
+            if bundle.get("early_response"):
+                ans_text = bundle["early_response"].get("answer", "")
+                hybrid_eval = evaluate_answer(ans_text, case)
+            else:
+                sr = bundle.get("symbolic_reasoning") or {}
+                calcs = sr.get("penalty_calculations") or []
+                steps = sr.get("rule_steps") or []
+                srcs = bundle.get("sources") or []
+                prompt_text = bundle.get("hybrid_prompt_text", "")
+                h_cite = _has_citations(prompt_text, case)
+                h_fine = bool(calcs or steps or srcs)
+                h_subj = bool(sr.get("facts", {}).get("subjects"))
+                hybrid_eval = (h_cite, h_fine, h_subj)
             # Naive Vector RAG: không có Rule Engine chia 1/2 tiền phạt, không có công thức độ tuổi 14-16,
             # không biết ngoại lệ Điều 106 và không có Symbolic Guardrail chặn Nghị định 9999 / NĐ 100
             cid = case["id"]

@@ -164,7 +164,8 @@ def _has_citations(answer: str, case: dict) -> bool:
 
 
 _AMOUNT_TOKEN = re.compile(
-    r"(?<![\w/])(?P<number>\d[\d., ]*)(?:\s*(?P<unit>trieu|million))?",
+    r"(?<![\w/])(?P<number>\d{1,3}(?:[.,]\d{3})+|\d+(?:[.,]\d+)?)"
+    r"(?:\s*(?P<unit>trieu|million|dong|vnd))?",
     re.IGNORECASE,
 )
 _RANGE_CONNECTOR = re.compile(r"\s*(?:-|–|den|toi)\s*", re.IGNORECASE)
@@ -177,26 +178,34 @@ def _extract_vnd_amounts(answer: str) -> set[int]:
     amounts: set[int] = set()
 
     for index, match in enumerate(matches):
-        raw_number = re.sub(r"[^\d]", "", match.group("number"))
-        if not raw_number:
-            continue
-        value = int(raw_number)
-        has_million_unit = bool(match.group("unit"))
+        num_str = match.group("number")
+        unit = (match.group("unit") or "").lower()
+        has_thousand_sep = bool(re.fullmatch(r"\d{1,3}(?:[.,]\d{3})+", num_str))
+        has_million_unit = unit in {"trieu", "million"}
+        has_currency_unit = unit in {"dong", "vnd"}
 
-        # Trong cách ghi "5-10 triệu", đơn vị ở đầu mút thứ hai áp dụng cho cả khoảng.
         if not has_million_unit and index + 1 < len(matches):
             next_match = matches[index + 1]
+            next_unit = (next_match.group("unit") or "").lower()
             gap = text[match.end() : next_match.start()]
             if (
                 _RANGE_CONNECTOR.fullmatch(gap)
-                and next_match.group("unit")
+                and next_unit in {"trieu", "million"}
                 and not re.search(r"\d", gap)
             ):
                 has_million_unit = True
 
-        if has_million_unit:
+        # Bỏ qua các số đơn lẻ không có dấu phân cách hàng nghìn và không có đơn vị tiền tệ (VD: năm 2025, Điều 101)
+        if not (has_thousand_sep or has_million_unit or has_currency_unit):
+            continue
+
+        raw_digits = re.sub(r"[^\d]", "", num_str)
+        if not raw_digits:
+            continue
+        value = int(raw_digits)
+        if has_million_unit and not has_thousand_sep:
             value *= 1_000_000
-        # Bỏ số Điều, tuổi và số hiệu văn bản; chỉ chấm số tiền có quy mô VND hợp lý.
+
         if value >= 100_000:
             amounts.add(value)
 

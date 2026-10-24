@@ -1582,7 +1582,10 @@ function App() {
         setEvidenceAttachment({
           filename: file.name,
           char_count: 0,
-          extracted_text: `[Bằng chứng đính kèm: ${file.name}]`,
+          word_count: 0,
+          extracted_text: '',
+          is_valid_evidence: false,
+          rejection_reason: 'Không thể trích xuất văn bản hợp lệ từ tệp đính kèm.',
         });
       } finally {
         setIsUploadingEvidence(false);
@@ -2216,15 +2219,38 @@ function App() {
             }}
           >
             {evidenceAttachment && (
-              <div className="evidence-attachment-banner">
+              <div
+                className="evidence-attachment-banner"
+                style={
+                  evidenceAttachment.is_valid_evidence === false
+                    ? {
+                        borderColor: 'rgba(220, 38, 38, 0.45)',
+                        background: 'rgba(254, 242, 242, 0.85)',
+                      }
+                    : undefined
+                }
+              >
                 <div className="evidence-banner-left">
-                  <Paperclip size={14} className="evidence-icon" />
+                  <Paperclip
+                    size={14}
+                    className="evidence-icon"
+                    style={evidenceAttachment.is_valid_evidence === false ? { color: '#dc2626' } : undefined}
+                  />
                   <div className="evidence-info">
-                    <span className="evidence-name">
-                      Bằng chứng: <b>{evidenceAttachment.filename}</b> ({evidenceAttachment.char_count} ký tự OCR)
+                    <span
+                      className="evidence-name"
+                      style={evidenceAttachment.is_valid_evidence === false ? { color: '#b91c1c' } : undefined}
+                    >
+                      {evidenceAttachment.is_valid_evidence === false ? '⚠️ Ảnh/Tệp không hợp lệ: ' : 'Bằng chứng: '}
+                      <b>{evidenceAttachment.filename}</b> ({evidenceAttachment.char_count} ký tự OCR)
                     </span>
-                    <span className="evidence-preview">
-                      {evidenceAttachment.extracted_text.slice(0, 140)}...
+                    <span
+                      className="evidence-preview"
+                      style={evidenceAttachment.is_valid_evidence === false ? { color: '#dc2626' } : undefined}
+                    >
+                      {evidenceAttachment.is_valid_evidence === false
+                        ? evidenceAttachment.rejection_reason || 'Không tìm thấy văn bản pháp lý hoặc hành vi vi phạm trong ảnh.'
+                        : `${evidenceAttachment.extracted_text.slice(0, 140)}...`}
                     </span>
                   </div>
                 </div>

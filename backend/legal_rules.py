@@ -256,6 +256,12 @@ def analyze_question(question: str) -> QueryFacts:
             mapped_dec = KNOWN_DECREE_NUMBERS[num]
             if mapped_dec not in doc_hints:
                 doc_hints.append(mapped_dec)
+        elif num == 2020:
+            if "15/2020/NĐ-CP" not in doc_hints:
+                doc_hints.append("15/2020/NĐ-CP")
+        elif 1990 <= num <= 2035:
+            # Người dùng nhắc đến năm ban hành (VD: "Nghị định 2023", "Nghị định 2024"), không phải nghị định giả
+            continue
         elif num > 500:
             if num not in invalid_numbers:
                 invalid_numbers.add(num)

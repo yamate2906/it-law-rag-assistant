@@ -446,12 +446,14 @@ def _configure_tesseract() -> str:
 
 
 def _ocr_cache_path(path: Path) -> Path:
-    cache_dir = path.parent / ".ocr_cache"
+    cache_dir = Path(__file__).resolve().parent.parent / "data" / ".ocr_cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
-    stat = path.stat()
-    fingerprint = hashlib.sha1(f"{path.name}:{stat.st_size}:{int(stat.st_mtime)}".encode("utf-8")).hexdigest()[:12]
-    safe_name = re.sub(r"[^\w\-.]", "_", path.name)
-    return cache_dir / f"{safe_name}.{fingerprint}.json"
+    try:
+        content_hash = hashlib.sha1(path.read_bytes()).hexdigest()[:16]
+    except Exception:
+        stat = path.stat()
+        content_hash = hashlib.sha1(f"{path.name}:{stat.st_size}:{int(stat.st_mtime)}".encode("utf-8")).hexdigest()[:16]
+    return cache_dir / f"ocr.{content_hash}.json"
 
 
 def _pil_from_pixmap(pixmap) -> Any:

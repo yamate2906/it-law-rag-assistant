@@ -135,14 +135,23 @@ def build_structured_chunks(
 def sync_existing_pgvector_metadata() -> int:
     """Đồng bộ và chuẩn hóa metadata (doc_code, doc_title, article_id, article_number, article_title)
     cho các bản ghi đã nhúng trong bảng langchain_pg_embedding để kích hoạt cầu nối Neural -> Symbolic."""
-    docs = load_corpus(PROJECT_DIR / "data", core_only=False)
-    by_code = {d.code: d for d in docs}
-
     dsn = CONNECTION_STRING.replace("postgresql+psycopg2://", "postgresql://")
     conn = psycopg2.connect(dsn)
     cur = conn.cursor()
     cur.execute("SELECT uuid, document, cmetadata FROM langchain_pg_embedding;")
     rows = cur.fetchall()
+
+    existing_sources = {
+        Path(str((meta or {}).get("source", ""))).name
+        for _, _, meta in rows
+        if isinstance(meta, dict) and meta.get("source")
+    }
+    docs = load_corpus(
+        PROJECT_DIR / "data",
+        core_only=False,
+        only_sources=existing_sources if existing_sources else None,
+    )
+    by_code = {d.code: d for d in docs}
 
     updated = 0
     for row_uuid, raw_text, meta in rows:
