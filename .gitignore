@@ -1,15 +1,22 @@
 # Môi trường ảo Python
+.venv/
 backend/venv/
 backend/__pycache__/
+**/__pycache__/
+*.pyc
 
-# Thư viện Frontend
+# Thư viện & Build Frontend
 frontend/node_modules/
 frontend/dist/
 
 # Biến môi trường (Bảo mật API Key)
 .env
 backend/.env
+frontend/.env
+*.env.local
 
-# File hệ thống & bộ nhớ đệm OCR
+# Logs & Bộ nhớ đệm OCR
+*.log
 .DS_Store
 data/.ocr_cache/
+scratch/

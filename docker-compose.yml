@@ -6,11 +6,11 @@ services:
     container_name: law_postgres_graph
     restart: always
     environment:
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: admin2906
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
       POSTGRES_DB: law_db
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - law_graph_data:/var/lib/postgresql/data
 
@@ -20,10 +20,10 @@ services:
     container_name: law_neo4j
     restart: always
     ports:
-      - "7474:7474" # Neo4j Browser: http://localhost:7474
-      - "7687:7687" # Bolt cho backend Python
+      - "127.0.0.1:7474:7474" # Neo4j Browser: http://localhost:7474
+      - "127.0.0.1:7687:7687" # Bolt cho backend Python
     environment:
-      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-lawgraph2906}
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-password123}
       NEO4J_server_memory_heap_initial__size: 512m
       NEO4J_server_memory_heap_max__size: 1G
       NEO4J_server_memory_pagecache_size: 512m

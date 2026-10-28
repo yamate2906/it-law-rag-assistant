@@ -33,23 +33,24 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
-import warnings
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from config import DATA_DIR, NEO4J_DATABASE, create_llm, create_neo4j_driver, get_embeddings
 from legal_parser import (
+    DOCUMENT_REGISTRY,
+    REPEALED_15_ARTICLES,
     SUPPORTED_SUFFIXES,
     Article,
     Clause,
     LegalDocument,
     clause_id,
     identify_document_by_name,
+    infer_issuing_body,
     load_corpus,
+    related_document_codes,
 )
-from legal_rules import DECREE_RULES, INDIVIDUAL, ORGANIZATION
+from legal_knowledge import provision_version_id
+from legal_rules import DECREE_RULES, INDIVIDUAL
 
 EXTRACTOR_VERSION = "neo4j-v2"
 ACTION_VECTOR_INDEX = "action_embedding"
@@ -67,13 +68,21 @@ CATEGORY_LABELS = {
 
 # Các Điều trọng tâm thường xuyên được truy vấn để ưu tiên nhúng Vector nhanh
 PRIORITY_ARTICLES: dict[str, set[int]] = {
-    "15/2020/NĐ-CP": {4, 83, 84, 99, 100, 101, 102, 103, 104, 105, 106},
+    "15/2020/NĐ-CP": {4, 15, 20, 33, 68, 77, 78, 79, 80, 81, 82, 83, 84, 94, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108},
+    "174/2026/NĐ-CP": {4, 86, 87, 88, 89, 90, 91, 93, 94, 95, 106},
+    "330/2026/NĐ-CP": {4, 25, 26, 50},
     "24/2018/QH14": {8, 16, 17, 18, 19, 24, 26, 29},
+    "116/2025/QH15": {7, 8, 9, 10, 18, 20, 25, 38},
+    "134/2025/QH15": {4, 7, 9, 10, 11, 13, 14, 29},
+    "133/2025/QH15": {3, 5, 6, 10, 15, 16},
+    "122/2025/QH15": {3, 6, 15, 17, 18, 22, 27},
+    "248/2026/NĐ-CP": {12, 17, 18, 21, 31, 32, 34, 36},
     "67/2006/QH11": {9, 12, 16, 21, 70, 71, 72},
+    "13/2023/NĐ-CP": {3, 9, 11, 13, 22},
     "20/2023/QH15": {6, 8, 22},
     "24/2023/QH15": {9, 13},
     "60/2024/QH15": {10, 14},
-    "100/2015/QH13": {12, 155, 156, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 331},
+    "100/2015/QH13": {12, 14, 155, 156, 159, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 331},
 }
 
 _CONDITION_RE = re.compile(
@@ -253,14 +262,19 @@ def _fine_action_name(clause: Clause) -> str:
     return _clean(match.group(1) if match else clause.text, 300).rstrip(".;:")
 
 
-def _base_subject(doc_code: str, article_number: int) -> str | None:
+def _base_subject(doc_code: str, article_number: int | str) -> str | None:
+    match_num = re.match(r"^(\d+)", str(article_number).strip())
+    art_int = int(match_num.group(1)) if match_num else None
+    if art_int is None:
+        return None
     config = DECREE_RULES.get(doc_code)
     if not config:
         return None
     low, high = config["scope"]
-    if not low <= article_number <= high:
+    if not (low <= art_int <= high):
         return None
-    return INDIVIDUAL if article_number in config["individual_base_articles"] else config["base_subject"]
+    is_individual = article_number in config["individual_base_articles"] or art_int in config["individual_base_articles"]
+    return INDIVIDUAL if is_individual else config["base_subject"]
 
 
 def _extract_conditions(text: str) -> list[dict[str, str]]:
@@ -274,14 +288,21 @@ def _extract_conditions(text: str) -> list[dict[str, str]]:
 SCHEMA_QUERIES = [
     "CREATE CONSTRAINT legaldoc_code IF NOT EXISTS FOR (n:LegalDoc) REQUIRE n.code IS UNIQUE",
     "CREATE CONSTRAINT article_id IF NOT EXISTS FOR (n:Article) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT chapter_id IF NOT EXISTS FOR (n:Chapter) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT section_id IF NOT EXISTS FOR (n:Section) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT issuing_body_name IF NOT EXISTS FOR (n:IssuingBody) REQUIRE n.name IS UNIQUE",
     "CREATE CONSTRAINT clause_id IF NOT EXISTS FOR (n:Clause) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT point_id IF NOT EXISTS FOR (n:Point) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT provision_version_id IF NOT EXISTS FOR (n:ProvisionVersion) REQUIRE n.id IS UNIQUE",
     "CREATE CONSTRAINT action_id IF NOT EXISTS FOR (n:Action) REQUIRE n.id IS UNIQUE",
     "CREATE CONSTRAINT penalty_id IF NOT EXISTS FOR (n:Penalty) REQUIRE n.id IS UNIQUE",
     "CREATE CONSTRAINT sanction_id IF NOT EXISTS FOR (n:Sanction) REQUIRE n.id IS UNIQUE",
     "CREATE CONSTRAINT subject_key IF NOT EXISTS FOR (n:Subject) REQUIRE n.key IS UNIQUE",
     "CREATE CONSTRAINT condition_key IF NOT EXISTS FOR (n:Condition) REQUIRE n.key IS UNIQUE",
+    "CREATE CONSTRAINT precedent_id IF NOT EXISTS FOR (n:Precedent) REQUIRE n.id IS UNIQUE",
     f"CREATE FULLTEXT INDEX {ACTION_FULLTEXT_INDEX} IF NOT EXISTS FOR (n:Action) ON EACH [n.name, n.text]",
     f"CREATE FULLTEXT INDEX {ARTICLE_FULLTEXT_INDEX} IF NOT EXISTS FOR (n:Article) ON EACH [n.title, n.text]",
+    "CREATE FULLTEXT INDEX precedent_fulltext IF NOT EXISTS FOR (n:Precedent) ON EACH [n.title, n.legal_issue, n.holding, n.reasoning]",
 ]
 
 
@@ -299,13 +320,47 @@ def reset_graph(driver) -> None:
 
 
 def _write_skeleton(tx, document: LegalDocument, article: Article) -> dict[str, int]:
+    existing = tx.run(
+        "MATCH (a:Article {id: $id}) RETURN a.text AS text",
+        id=article.id,
+    ).single()
+    if existing and existing["text"] != article.text:
+        tx.run(
+            """
+            MATCH (a:Article {id: $id})
+            OPTIONAL MATCH (a)<-[:PART_OF]-(k:Clause)
+            OPTIONAL MATCH (act:Action)-[:DEFINED_IN]->(k)
+            WITH a, collect(DISTINCT k) AS clauses, collect(DISTINCT act) AS clause_actions
+            OPTIONAL MATCH (direct:Action)-[:DEFINED_IN]->(a)
+            WITH a, clauses, clause_actions, collect(DISTINCT direct) AS direct_actions
+            WITH a, clauses, clause_actions + direct_actions AS actions
+            FOREACH (clause IN clauses | DETACH DELETE clause)
+            FOREACH (action IN actions | DETACH DELETE action)
+            SET a.llm_done = false
+            REMOVE a.llm_version, a.llm_at, a.llm_fine_checked, a.llm_fine_mismatch
+            """,
+            id=article.id,
+        ).consume()
+    tx.run(
+        "MATCH (a:Article {id: $id})-[r:REFERENCES]->() DELETE r",
+        id=article.id,
+    ).consume()
     tx.run(
         """
         MERGE (d:LegalDoc {code: $code})
-        SET d.title = $title, d.short = $short, d.type = $type, d.sources = $sources
+        SET d.title = $title, d.short = $short, d.type = $type, d.sources = $sources,
+            d.amends = $amends, d.issuing_body = $issuing_body,
+            d.effective_from = $effective_from, d.effective_to = $effective_to,
+            d.source_url = $source_url
+        FOREACH (_ IN CASE WHEN $issuing_body IS NULL THEN [] ELSE [1] END |
+            MERGE (ib:IssuingBody {name: $issuing_body})
+            MERGE (d)-[:ISSUED_BY]->(ib)
+        )
         MERGE (a:Article {id: $id})
         SET a.doc_code = $code, a.number = $number, a.title = $atitle, a.chapter = $chapter,
-            a.text = $text, a.source = $source, a.page = $page, a.label = $label
+            a.text = $text, a.source = $source, a.page = $page, a.label = $label,
+            a.effective_from = $article_effective_from, a.effective_to = $article_effective_to,
+            a.source_url = $article_source_url, a.provenance_status = 'PARSED_FROM_REGISTERED_SOURCE'
         MERGE (a)-[:PART_OF]->(d)
         """,
         code=document.code,
@@ -313,8 +368,16 @@ def _write_skeleton(tx, document: LegalDocument, article: Article) -> dict[str, 
         short=document.short,
         type=document.doc_type,
         sources=document.sources,
+        amends=document.amends,
+        effective_from=document.effective_from,
+        effective_to=document.effective_to,
+        source_url=document.source_url,
+        issuing_body=getattr(document, 'issuing_body', None) or ('Quốc hội' if 'QH' in document.code else 'Chính phủ'),
         id=article.id,
         number=article.number,
+        article_effective_from=article.effective_from or document.effective_from,
+        article_effective_to=article.effective_to or document.effective_to,
+        article_source_url=article.source_url or document.source_url,
         atitle=article.title,
         chapter=article.chapter,
         text=article.text,
@@ -322,17 +385,108 @@ def _write_skeleton(tx, document: LegalDocument, article: Article) -> dict[str, 
         page=article.page,
         label=f"Điều {article.number} {document.short}",
     )
+    version_id = provision_version_id(
+        document.code,
+        article.number,
+        article.source,
+        article.text,
+        article.effective_from or document.effective_from,
+        article.effective_to or document.effective_to,
+    )
+    tx.run(
+        """
+        MATCH (a:Article {id: $article_id})
+        MERGE (v:ProvisionVersion {id: $version_id})
+        SET v.doc_code = $doc_code, v.article_number = $article_number,
+            v.title = $title, v.chapter = $chapter, v.text = $text,
+            v.source_file = $source_file, v.source_page = $source_page,
+            v.source_url = $source_url, v.effective_from = $effective_from,
+            v.effective_to = $effective_to,
+            v.provenance_status = 'PARSED_FROM_REGISTERED_SOURCE'
+        MERGE (a)-[:HAS_VERSION]->(v)
+        """,
+        article_id=article.id,
+        version_id=version_id,
+        doc_code=document.code,
+        article_number=str(article.number),
+        title=article.title,
+        chapter=article.chapter,
+        text=article.text,
+        source_file=article.source,
+        source_page=article.page,
+        source_url=article.source_url or document.source_url,
+        effective_from=article.effective_from or document.effective_from,
+        effective_to=article.effective_to or document.effective_to,
+    ).consume()
+    tx.run(
+        "MATCH (a:Article {id: $article_id}) SET a.current_version_id = $version_id",
+        article_id=article.id,
+        version_id=version_id,
+    ).consume()
+    if article.chapter:
+        chapter_id = f"{document.code}:Chương {article.chapter}"
+        tx.run(
+            """
+            MATCH (d:LegalDoc {code: $doc_code}), (a:Article {id: $article_id})
+            MERGE (ch:Chapter {id: $chapter_id})
+            SET ch.title = $title, ch.doc_code = $doc_code,
+                ch.source_file = $source_file, ch.source_page = $source_page
+            MERGE (ch)-[:PART_OF]->(d)
+            MERGE (a)-[:PART_OF_CHAPTER]->(ch)
+            """,
+            doc_code=document.code,
+            article_id=article.id,
+            chapter_id=chapter_id,
+            title=article.chapter,
+            source_file=article.source,
+            source_page=article.page,
+        ).consume()
+    if getattr(article, "section", None):
+        sec_id = (
+            f"{document.code}:Chương {article.chapter}:Mục {article.section}"
+            if article.chapter
+            else f"{document.code}:Mục {article.section}"
+        )
+        chapter_id = f"{document.code}:Chương {article.chapter}" if article.chapter else None
+        tx.run(
+            """
+            MATCH (d:LegalDoc {code: $doc_code}), (a:Article {id: $article_id})
+            MERGE (sec:Section {id: $section_id})
+            SET sec.title = $title, sec.doc_code = $doc_code, sec.chapter = $chapter,
+                sec.source_file = $source_file, sec.source_page = $source_page
+            MERGE (sec)-[:PART_OF]->(d)
+            MERGE (a)-[:PART_OF_SECTION]->(sec)
+            WITH sec
+            OPTIONAL MATCH (ch:Chapter {id: $chapter_id})
+            FOREACH (_ IN CASE WHEN ch IS NULL THEN [] ELSE [1] END |
+                MERGE (sec)-[:PART_OF]->(ch)
+            )
+            """,
+            doc_code=document.code,
+            article_id=article.id,
+            section_id=sec_id,
+            chapter_id=chapter_id,
+            chapter=article.chapter or None,
+            title=article.section,
+            source_file=article.source,
+            source_page=article.page,
+        ).consume()
     if article.references:
         tx.run(
             """
             MATCH (a:Article {id: $id})
             UNWIND $refs AS ref
             MATCH (b:Article {doc_code: $code, number: ref})
-            MERGE (a)-[:REFERENCES]->(b)
+            MERGE (a)-[r:REFERENCES]->(b)
+            SET r.source_file = $source_file, r.source_page = $source_page,
+                r.source_url = $source_url, r.provenance_status = 'PARSED_REFERENCE'
             """,
             id=article.id,
             refs=article.references,
             code=document.code,
+            source_file=article.source,
+            source_page=article.page,
+            source_url=article.source_url or document.source_url,
         )
 
     clauses, penalty_actions, law_actions, sanctions = [], [], [], []
@@ -349,6 +503,14 @@ def _write_skeleton(tx, document: LegalDocument, article: Article) -> dict[str, 
             "fine_max": clause.fine_max,
             "warning": clause.warning,
             "label": f"Khoản {clause.number} Điều {article.number}",
+            "points": [
+                {
+                    "id": f"{cid}:Điểm {point.letter}",
+                    "letter": point.letter,
+                    "text": point.text,
+                }
+                for point in clause.points
+            ],
         })
         if kind == "PENALTY":
             penalty_type = "FINE" if clause.fine_min is not None else "WARNING"
@@ -367,6 +529,7 @@ def _write_skeleton(tx, document: LegalDocument, article: Article) -> dict[str, 
                 penalty_actions.append({
                     "id": f"{cid}:{letter}",
                     "clause_id": cid,
+                    "version_id": version_id,
                     "point": None if letter == "_" else letter,
                     "name": _clean(text, 300).rstrip(".;:"),
                     "text": text,
@@ -400,6 +563,7 @@ def _write_skeleton(tx, document: LegalDocument, article: Article) -> dict[str, 
                     law_actions.append({
                         "id": f"{cid}:{letter}",
                         "clause_id": cid,
+                        "version_id": version_id,
                         "point": None if letter == "_" else letter,
                         "name": clean_name,
                         "text": text,
@@ -413,11 +577,23 @@ def _write_skeleton(tx, document: LegalDocument, article: Article) -> dict[str, 
         UNWIND $clauses AS c
         MERGE (k:Clause {id: c.id})
         SET k.number = c.number, k.text = c.text, k.kind = c.kind, k.fine_min = c.fine_min,
-            k.fine_max = c.fine_max, k.warning = c.warning, k.label = c.label
+            k.fine_max = c.fine_max, k.warning = c.warning, k.label = c.label,
+            k.source_file = $source_file, k.source_page = $source_page,
+            k.source_url = $source_url, k.provenance_status = 'PARSED_FROM_REGISTERED_SOURCE'
         MERGE (k)-[:PART_OF]->(a)
+        WITH k, c
+        UNWIND c.points AS point
+        MERGE (p:Point {id: point.id})
+        SET p.letter = point.letter, p.text = point.text,
+            p.source_file = $source_file, p.source_page = $source_page,
+            p.source_url = $source_url, p.provenance_status = 'PARSED_FROM_REGISTERED_SOURCE'
+        MERGE (p)-[:PART_OF]->(k)
         """,
         article_id=article.id,
         clauses=clauses,
+        source_file=article.source,
+        source_page=article.page,
+        source_url=article.source_url or document.source_url,
     )
     if penalty_actions:
         tx.run(
@@ -426,8 +602,19 @@ def _write_skeleton(tx, document: LegalDocument, article: Article) -> dict[str, 
             MATCH (k:Clause {id: x.clause_id})
             MERGE (act:Action {id: x.id})
             ON CREATE SET act.name = x.name, act.kind = 'VIOLATION', act.source = 'parser'
-            SET act.text = x.text, act.point = x.point, act.article_id = $article_id
+            SET act.text = x.text, act.point = x.point, act.article_id = $article_id,
+                act.provision_version_id = x.version_id
             MERGE (act)-[r:DEFINED_IN]->(k) SET r.point = x.point
+            SET act.source_file = $source_file, act.source_page = $source_page,
+                act.source_url = $source_url, act.provenance_status = 'PARSED_FROM_REGISTERED_SOURCE'
+            WITH act, x, k
+            MATCH (version:ProvisionVersion {id: x.version_id})
+            MERGE (act)-[:FROM_VERSION]->(version)
+            WITH act, x, k
+            OPTIONAL MATCH (point:Point {id: k.id + ':Điểm ' + x.point})
+            FOREACH (_ IN CASE WHEN point IS NULL THEN [] ELSE [1] END |
+                MERGE (act)-[:DEFINED_AT]->(point)
+            )
             MERGE (p:Penalty {id: x.penalty.id})
             SET p.type = x.penalty.type, p.min_amount = x.penalty.min, p.max_amount = x.penalty.max,
                 p.warning = x.penalty.warning, p.base_subject = x.penalty.base_subject
@@ -445,6 +632,9 @@ def _write_skeleton(tx, document: LegalDocument, article: Article) -> dict[str, 
             """,
             actions=penalty_actions,
             article_id=article.id,
+            source_file=article.source,
+            source_page=article.page,
+            source_url=article.source_url or document.source_url,
         )
     if law_actions:
         tx.run(
@@ -453,8 +643,16 @@ def _write_skeleton(tx, document: LegalDocument, article: Article) -> dict[str, 
             MATCH (k:Clause {id: x.clause_id})
             MERGE (act:Action {id: x.id})
             ON CREATE SET act.name = x.name, act.kind = x.kind, act.source = 'parser'
-            SET act.text = x.text, act.point = x.point, act.article_id = $article_id, act.kind = x.kind
+            SET act.text = x.text, act.point = x.point, act.article_id = $article_id, act.kind = x.kind,
+                act.provision_version_id = x.version_id
             MERGE (act)-[r:DEFINED_IN]->(k) SET r.point = x.point
+            SET act.source_file = $source_file, act.source_page = $source_page,
+                act.source_url = $source_url, act.provenance_status = 'LLM_CANDIDATE_LINKED_TO_SOURCE'
+            WITH act, x, k
+            OPTIONAL MATCH (point:Point {id: k.id + ':Điểm ' + x.point})
+            FOREACH (_ IN CASE WHEN point IS NULL THEN [] ELSE [1] END |
+                MERGE (act)-[:DEFINED_AT]->(point)
+            )
             FOREACH (c IN x.conditions |
                 MERGE (cond:Condition {key: c.key}) ON CREATE SET cond.name = c.name
                 MERGE (act)-[:HAS_CONDITION]->(cond)
@@ -462,6 +660,9 @@ def _write_skeleton(tx, document: LegalDocument, article: Article) -> dict[str, 
             """,
             actions=law_actions,
             article_id=article.id,
+            source_file=article.source,
+            source_page=article.page,
+            source_url=article.source_url or document.source_url,
         )
     if sanctions:
         tx.run(
@@ -483,7 +684,52 @@ def _write_skeleton(tx, document: LegalDocument, article: Article) -> dict[str, 
     }
 
 
+def _write_historical_version(tx, document: LegalDocument, article: Article) -> None:
+    """Append a superseded provision snapshot without overwriting the canonical Article node."""
+    version_id = provision_version_id(
+        document.code,
+        article.number,
+        article.source,
+        article.text,
+        article.effective_from or document.effective_from,
+        article.effective_to or document.effective_to,
+    )
+    tx.run(
+        """
+        MATCH (a:Article {id: $article_id})
+        MERGE (v:ProvisionVersion {id: $version_id})
+        SET v.doc_code = $doc_code, v.article_number = $article_number,
+            v.title = $title, v.chapter = $chapter, v.text = $text,
+            v.source_file = $source_file, v.source_page = $source_page,
+            v.source_url = $source_url, v.effective_from = $effective_from,
+            v.effective_to = $effective_to,
+            v.provenance_status = 'PARSED_FROM_REGISTERED_SOURCE'
+        MERGE (a)-[:HAS_VERSION]->(v)
+        """,
+        article_id=article.id,
+        version_id=version_id,
+        doc_code=document.code,
+        article_number=str(article.number),
+        title=article.title,
+        chapter=article.chapter,
+        text=article.text,
+        source_file=article.source,
+        source_page=article.page,
+        source_url=article.source_url or document.source_url,
+        effective_from=article.effective_from or document.effective_from,
+        effective_to=article.effective_to or document.effective_to,
+    ).consume()
+
+
 def _write_llm(tx, document: LegalDocument, article: Article, extraction: ArticleExtraction) -> dict:
+    version_id = provision_version_id(
+        document.code,
+        article.number,
+        article.source,
+        article.text,
+        article.effective_from or document.effective_from,
+        article.effective_to or document.effective_to,
+    )
     parsed = {c.number: c for c in article.clauses}
     stats = {"norms": 0, "fine_checked": 0, "fine_mismatch": 0}
     rows = []
@@ -512,6 +758,7 @@ def _write_llm(tx, document: LegalDocument, article: Article, extraction: Articl
         rows.append({
             "id": action_id,
             "clause_id": cid,
+            "version_id": version_id,
             "point": letter if letter not in (None, "_") else None,
             "name": _clean(norm.name, 300),
             "kind": norm.kind,
@@ -533,11 +780,20 @@ def _write_llm(tx, document: LegalDocument, article: Article, extraction: Articl
         SET act.name = r.name, act.kind = r.kind, act.article_id = $article_id,
             act.source = CASE WHEN act.source = 'parser' THEN 'parser+llm' ELSE coalesce(act.source, 'llm') END,
             act.text = coalesce(act.text, r.name), act.point = coalesce(act.point, r.point),
-            act.llm_fine_min = r.fine_min, act.llm_fine_max = r.fine_max
+            act.llm_fine_min = r.fine_min, act.llm_fine_max = r.fine_max,
+            act.provision_version_id = r.version_id
+        WITH act, r
+        MATCH (version:ProvisionVersion {id: r.version_id})
+        MERGE (act)-[:FROM_VERSION]->(version)
         WITH act, r
         CALL (act, r) {
             MATCH (k:Clause {id: r.clause_id})
             MERGE (act)-[:DEFINED_IN]->(k)
+            WITH act, r, k
+            OPTIONAL MATCH (point:Point {id: k.id + ':Điểm ' + r.point})
+            FOREACH (_ IN CASE WHEN point IS NULL OR r.point IS NULL THEN [] ELSE [1] END |
+                MERGE (act)-[:DEFINED_AT]->(point)
+            )
         }
         CALL (act, r) {
             MATCH (a:Article {id: $article_id}) WHERE r.clause_id IS NULL
@@ -693,6 +949,7 @@ def embed_actions(driver, batch_size: int = 80, priority_only: bool = False) -> 
 
     if not rows:
         print("[EMBED] Mọi hành vi mục tiêu đã có embedding.")
+        _run_vector_similarity_link_suggestion(driver)
         return
 
     embeddings = get_embeddings()
@@ -749,6 +1006,36 @@ def embed_actions(driver, batch_size: int = 80, priority_only: bool = False) -> 
             """
         ).consume()
     print(f"[EMBED] Đã cập nhật Vector Index '{ACTION_VECTOR_INDEX}' ({dimensions} chiều).")
+    _run_vector_similarity_link_suggestion(driver)
+
+
+
+
+def _run_vector_similarity_link_suggestion(driver) -> None:
+    """Gợi ý liên kết :SUGGESTED_SANCTION giữa hành vi bị cấm trong Luật và vi phạm trong Nghị định qua độ tương đồng cosine (không đưa vào chuỗi suy luận tất định)."""
+    try:
+        with driver.session(database=NEO4J_DATABASE) as session:
+            res = session.run(
+                """
+                MATCH (law_act:Action)
+                WHERE law_act.embedding IS NOT NULL AND law_act.kind = 'PROHIBITED'
+                CALL db.index.vector.queryNodes('action_embedding', 3, law_act.embedding)
+                YIELD node AS dec_act, score
+                WHERE score >= 0.78 AND dec_act.kind = 'VIOLATION'
+                MATCH (law_art:Article {id: law_act.article_id})
+                MATCH (dec_art:Article {id: dec_act.article_id})
+                WHERE law_art.doc_code <> dec_art.doc_code
+                MERGE (law_art)-[r:SUGGESTED_SANCTION]->(dec_art)
+                ON CREATE SET r.provenance_status = 'VECTOR_SIMILARITY_SUGGESTION',
+                              r.similarity_score = score
+                RETURN count(r) AS total
+                """
+            ).single()
+            count = res["total"] if res else 0
+            if count:
+                print(f"[LINK SUGGESTION] Đã gợi ý {count} cạnh :SUGGESTED_SANCTION qua Vector Cosine Similarity.")
+    except Exception as e:
+        print(f"[LINK SUGGESTION CẢNH BÁO]: {e}")
 
 
 def print_stats(driver) -> None:
@@ -775,23 +1062,194 @@ def _get_ingested_graph_sources(driver, data_dir: Path) -> set[str]:
             """
         ).data()
     ingested_sources: set[str] = set()
-    ingested_codes: set[str] = set()
     for r in rows:
-        if r.get("code"):
-            ingested_codes.add(r["code"])
         for src in r.get("sources") or []:
             if src:
                 ingested_sources.add(Path(str(src)).name)
 
-    for path in sorted(data_dir.iterdir()):
-        if not path.is_file() or path.suffix.lower() not in SUPPORTED_SUFFIXES:
-            continue
-        if path.name in ingested_sources:
-            continue
-        doc_info = identify_document_by_name(path.name)
-        if doc_info and doc_info["code"] in ingested_codes and "15-2020" not in path.name.lower():
-            ingested_sources.add(path.name)
     return ingested_sources
+
+
+def sync_graph_legal_metadata(driver) -> int:
+    """Refresh effective dates and official source links without re-parsing documents."""
+    registry_by_code = {}
+    for entry in DOCUMENT_REGISTRY:
+        registry_by_code.setdefault(entry["code"], entry)
+    updated_articles = 0
+    with driver.session(database=NEO4J_DATABASE) as session:
+        for code, metadata in registry_by_code.items():
+            issuing_body = infer_issuing_body(code, metadata.get("type", "OTHER"))
+            result = session.run(
+                """
+                MATCH (d:LegalDoc {code: $code})
+                SET d.effective_from = $effective_from,
+                    d.effective_to = $effective_to,
+                    d.source_url = $source_url,
+                    d.amends = $amends,
+                    d.issuing_body = $issuing_body
+                MERGE (ib:IssuingBody {name: $issuing_body})
+                MERGE (d)-[:ISSUED_BY]->(ib)
+                WITH d
+                MATCH (a:Article {doc_code: $code})
+                SET a.effective_from = CASE
+                        WHEN a.number IN $amended_articles THEN $amendment_effective_from
+                        ELSE $effective_from
+                    END,
+                    a.effective_to = CASE
+                        WHEN a.number IN $repealed_articles THEN $partial_effective_to
+                        ELSE $effective_to
+                    END,
+                    a.source_url = CASE
+                        WHEN a.number IN $amended_articles THEN $amendment_source_url
+                        ELSE $source_url
+                    END
+                RETURN count(a) AS updated
+                """,
+                code=code,
+                issuing_body=issuing_body,
+                effective_from=metadata.get("effective_from"),
+                effective_to=metadata.get("effective_to"),
+                source_url=metadata.get("source_url"),
+                amends=metadata.get("amends", []),
+                amended_articles=["93a", "93b", 114, "114a"] if code == "15/2020/NĐ-CP" else [],
+                amendment_effective_from="2025-09-09" if code == "15/2020/NĐ-CP" else None,
+                amendment_source_url="https://vanban.chinhphu.vn/?classid=1&docid=214736&pageid=27160&typegroupid=4",
+                repealed_articles=sorted(
+                    REPEALED_15_ARTICLES,
+                    key=lambda number: (int(re.match(r"\d+", str(number)).group()), str(number)),
+                ) if code == "15/2020/NĐ-CP" else [],
+                partial_effective_to="2026-06-30" if code == "15/2020/NĐ-CP" else None,
+            )
+            record = result.single()
+            updated_articles += int(record["updated"] or 0) if record else 0
+        _sync_graph_amendment_links(session)
+    return updated_articles
+
+
+def _sync_graph_amendment_links(session) -> None:
+    """Link amendment decrees to their target documents after all docs are present."""
+    seen: set[tuple[str, str]] = set()
+    for entry in DOCUMENT_REGISTRY:
+        for amended_code in entry.get("amends", []):
+            pair = (entry["code"], amended_code)
+            if pair in seen:
+                continue
+            seen.add(pair)
+            session.run(
+                """
+                MERGE (amendment:LegalDoc {code: $amendment_code})
+                ON CREATE SET amendment.title = $title,
+                    amendment.short = $short,
+                    amendment.type = $type,
+                    amendment.effective_from = $effective_from,
+                    amendment.source_url = $source_url
+                WITH amendment
+                MATCH (target:LegalDoc {code: $target_code})
+                MERGE (amendment)-[r:AMENDS]->(target)
+                SET r.effective_from = $effective_from, r.source_url = $source_url,
+                    r.provenance_status = 'REGISTERED_METADATA'
+                """,
+                amendment_code=pair[0],
+                target_code=pair[1],
+                title=entry.get("title", pair[0]),
+                short=entry.get("short", pair[0]),
+                type=entry.get("type", "OTHER"),
+                effective_from=entry.get("effective_from"),
+                source_url=entry.get("source_url"),
+            ).consume()
+    repeal_document = next(
+        (entry for entry in DOCUMENT_REGISTRY if entry.get("code") == "174/2026/NĐ-CP"),
+        {},
+    )
+    session.run(
+        """
+        MERGE (amendment:LegalDoc {code: $amendment_code})
+        ON CREATE SET amendment.title = $title, amendment.short = $short,
+            amendment.type = $type, amendment.effective_from = $document_effective_from,
+            amendment.source_url = $document_source_url
+        WITH amendment
+        UNWIND $article_numbers AS article_number
+        MATCH (target:Article {doc_code: '15/2020/NĐ-CP', number: article_number})
+        MERGE (amendment)-[r:REPEALS]->(target)
+        SET r.effective_from = '2026-07-01',
+            r.source_url = $document_source_url,
+            r.provenance_status = 'REGISTERED_REPEAL_SET'
+        """,
+        amendment_code="174/2026/NĐ-CP",
+        title=repeal_document.get("title", "Nghị định 174/2026/NĐ-CP"),
+        short=repeal_document.get("short", "Nghị định 174/2026/NĐ-CP"),
+        type=repeal_document.get("type", "DECREE"),
+        document_effective_from=repeal_document.get("effective_from", "2026-07-01"),
+        document_source_url=repeal_document.get("source_url"),
+        article_numbers=sorted(
+            REPEALED_15_ARTICLES,
+            key=lambda number: (int(re.match(r"\d+", str(number)).group()), str(number)),
+        ),
+    ).consume()
+    session.run(
+        """
+        MATCH (amendment:LegalDoc {code: '211/2025/NĐ-CP'})
+        UNWIND $article_numbers AS article_number
+        MATCH (target:Article {doc_code: '15/2020/NĐ-CP', number: article_number})
+        MERGE (amendment)-[r:AMENDS_PROVISION]->(target)
+        SET r.effective_from = amendment.effective_from,
+            r.source_url = amendment.source_url,
+            r.provenance_status = 'REGISTERED_AMENDMENT_SET'
+        """,
+        article_numbers=["93a", "93b", 114, "114a"],
+    ).consume()
+
+    # Liên kết quan hệ tiến hóa Điều cũ -> [:REPLACED_BY] -> Điều mới
+    replacement_records = [
+        {"old_doc": "15/2020/NĐ-CP", "old_art": 99, "new_doc": "174/2026/NĐ-CP", "new_art": 93, "effective_from": "2026-07-01"},
+        {"old_doc": "15/2020/NĐ-CP", "old_art": 100, "new_doc": "174/2026/NĐ-CP", "new_art": 94, "effective_from": "2026-07-01"},
+        {"old_doc": "15/2020/NĐ-CP", "old_art": 101, "new_doc": "174/2026/NĐ-CP", "new_art": 95, "effective_from": "2026-07-01"},
+        {"old_doc": "15/2020/NĐ-CP", "old_art": 102, "new_doc": "330/2026/NĐ-CP", "new_art": 50, "effective_from": "2026-08-19"},
+    ]
+    session.run(
+        """
+        UNWIND $replacements AS rep
+        MATCH (old_art:Article {doc_code: rep.old_doc, number: rep.old_art})
+        MATCH (new_art:Article {doc_code: rep.new_doc, number: rep.new_art})
+        MERGE (old_art)-[r:REPLACED_BY]->(new_art)
+        SET r.effective_from = rep.effective_from,
+            r.provenance_status = 'REGISTERED_REPLACEMENT_SET'
+        """,
+        replacements=replacement_records,
+    ).consume()
+
+    # Liên kết xuyên văn bản có kiểm chứng ngữ nghĩa (Semantic Cross-Document Sanction Links):
+    # Ánh xạ chuẩn từ từng hành vi cấm trong Luật An ninh mạng sang đúng Điều xử phạt vi phạm hành chính
+    curated_sanction_pairs = [
+        # Nhóm 1: Tán phát thông tin sai sự thật / vu khống / xúc phạm / thông tin giả
+        {"law_doc": "24/2018/QH14", "law_art": 8, "dec_doc": "15/2020/NĐ-CP", "dec_art": 101, "topic": "fake_news"},
+        {"law_doc": "24/2018/QH14", "law_art": 8, "dec_doc": "15/2020/NĐ-CP", "dec_art": 99, "topic": "sovereignty_map"},
+        {"law_doc": "24/2018/QH14", "law_art": 8, "dec_doc": "174/2026/NĐ-CP", "dec_art": 95, "topic": "fake_news"},
+        {"law_doc": "116/2025/QH15", "law_art": 8, "dec_doc": "174/2026/NĐ-CP", "dec_art": 95, "topic": "fake_news"},
+        {"law_doc": "116/2025/QH15", "law_art": 8, "dec_doc": "174/2026/NĐ-CP", "dec_art": 93, "topic": "sovereignty_map"},
+
+        # Nhóm 2: Xâm nhập trái phép, bẻ khóa, tấn công mạng, phát tán mã độc
+        {"law_doc": "24/2018/QH14", "law_art": 8, "dec_doc": "15/2020/NĐ-CP", "dec_art": 80, "topic": "cyberattack"},
+        {"law_doc": "24/2018/QH14", "law_art": 18, "dec_doc": "15/2020/NĐ-CP", "dec_art": 80, "topic": "cyberattack"},
+        {"law_doc": "24/2018/QH14", "law_art": 18, "dec_doc": "174/2026/NĐ-CP", "dec_art": 89, "topic": "cyberattack"},
+        {"law_doc": "116/2025/QH15", "law_art": 18, "dec_doc": "174/2026/NĐ-CP", "dec_art": 89, "topic": "cyberattack"},
+
+        # Nhóm 3: Bảo vệ dữ liệu cá nhân & an ninh thông tin
+        {"law_doc": "24/2018/QH14", "law_art": 8, "dec_doc": "15/2020/NĐ-CP", "dec_art": 102, "topic": "data_privacy"},
+        {"law_doc": "24/2018/QH14", "law_art": 8, "dec_doc": "330/2026/NĐ-CP", "dec_art": 50, "topic": "data_privacy"},
+        {"law_doc": "116/2025/QH15", "law_art": 8, "dec_doc": "330/2026/NĐ-CP", "dec_art": 50, "topic": "data_privacy"},
+    ]
+    session.run(
+        """
+        UNWIND $pairs AS p
+        MATCH (law_art:Article {doc_code: p.law_doc, number: p.law_art})
+        MATCH (dec_art:Article {doc_code: p.dec_doc, number: p.dec_art})
+        MERGE (law_art)-[r:SANCTIONED_BY]->(dec_art)
+        SET r.topic = p.topic,
+            r.provenance_status = 'SEMANTIC_VERIFIED_CROSS_DOC_LINK'
+        """,
+        pairs=curated_sanction_pairs,
+    ).consume()
 
 
 def main() -> int:
@@ -805,6 +1263,11 @@ def main() -> int:
     parser.add_argument("--priority-only", action="store_true", help="Chỉ nhúng Vector cho các Điều trọng tâm")
     parser.add_argument("--force", action="store_true", help="Đọc và trích xuất lại cả các văn bản/Điều đã xong")
     parser.add_argument("--file", type=str, default=None, help="Chỉ nạp 1 file cụ thể trong data/")
+    parser.add_argument(
+        "--sync-metadata",
+        action="store_true",
+        help="Cập nhật metadata hiệu lực/nguồn trong Neo4j mà không đọc lại tài liệu hoặc gọi embedding API",
+    )
     parser.add_argument("--workers", type=int, default=4, help="Số luồng gọi LLM song song")
     parser.add_argument("--limit", type=int, default=None, help="Giới hạn số Điều gửi LLM (thử nghiệm)")
     args = parser.parse_args()
@@ -817,6 +1280,11 @@ def main() -> int:
         return 1
 
     try:
+        if args.sync_metadata:
+            updated = sync_graph_legal_metadata(driver)
+            print(f"[SYNC] Đã đồng bộ metadata hiệu lực/nguồn cho {updated} Điều trong Neo4j.")
+            return 0
+
         if args.reset:
             reset_graph(driver)
         setup_schema(driver)
@@ -828,6 +1296,37 @@ def main() -> int:
                 print(f"[SKIP] Bỏ qua {len(skip_sources)} file đã có trong Neo4j (dùng --force hoặc --reset nếu muốn nạp lại).")
 
         only_sources = {Path(args.file).name} if args.file else None
+        pending_files = [
+            path.name
+            for path in DATA_DIR.iterdir()
+            if path.is_file()
+            and path.suffix.lower() in SUPPORTED_SUFFIXES
+            and (args.file is None or path.name == Path(args.file).name)
+            and path.name not in skip_sources
+        ]
+        pending_related_codes: set[str] = set()
+        for source in pending_files:
+            info = identify_document_by_name(source)
+            if info:
+                pending_related_codes.update(related_document_codes(info["code"]))
+        if pending_related_codes:
+            skip_sources = {
+                source
+                for source in skip_sources
+                if not (info := identify_document_by_name(source)) or info["code"] not in pending_related_codes
+            }
+            if args.file:
+                selected_info = identify_document_by_name(args.file)
+                if selected_info:
+                    source_codes = related_document_codes(selected_info["code"])
+                    only_sources = {
+                        path.name
+                        for path in DATA_DIR.iterdir()
+                        if path.is_file()
+                        and path.suffix.lower() in SUPPORTED_SUFFIXES
+                        and (info := identify_document_by_name(path))
+                        and info["code"] in source_codes
+                    }
         documents = load_corpus(DATA_DIR, skip_sources=skip_sources, only_sources=only_sources)
 
         totals = {"clauses": 0, "actions": 0, "sanctions": 0}
@@ -837,10 +1336,17 @@ def main() -> int:
                     stats = session.execute_write(_write_skeleton, document, article)
                     for key in totals:
                         totals[key] += stats[key]
+            historical_version_count = 0
+            for document in documents:
+                for article in document.historical_articles:
+                    session.execute_write(_write_historical_version, document, article)
+                    historical_version_count += 1
+            _sync_graph_amendment_links(session)
         if documents:
             print(
                 f"[SKELETON] Đã nạp thêm {sum(len(d.articles) for d in documents)} Điều, {totals['clauses']} Khoản, "
-                f"{totals['actions']} hành vi/quy phạm, {totals['sanctions']} biện pháp bổ sung/khắc phục."
+                f"{totals['actions']} hành vi/quy phạm, {totals['sanctions']} biện pháp bổ sung/khắc phục, "
+                f"{historical_version_count} phiên bản Điều lịch sử."
             )
         else:
             print("[SKELETON] Không có file mới cần dựng khung xương.")

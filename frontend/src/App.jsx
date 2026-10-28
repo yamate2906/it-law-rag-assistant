@@ -8,23 +8,33 @@ import {
   Trash2, PanelLeftClose, PanelLeftOpen, Maximize2, Minimize2,
   Copy, Check, RotateCcw, ZoomIn, ZoomOut, Play, Pause, Search,
   Database, Terminal, Layers, Sun, Moon, Paperclip, FileText,
-  BarChart3, Sliders, AlertTriangle, Printer
+  BarChart3, Sliders
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import './App.css';
 
-const API_BASE_URL = 'http://127.0.0.1:8000';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
+const API_HEADERS = import.meta.env.VITE_LAW_API_KEY
+  ? { 'X-API-Key': import.meta.env.VITE_LAW_API_KEY }
+  : {};
+const EMPTY_MESSAGES = Object.freeze([]);
+let fallbackMessageIdCounter = 0;
+
+function createMessageId() {
+  const randomId = globalThis.crypto?.randomUUID?.();
+  return `bot-${randomId || `${Date.now()}-${++fallbackMessageIdCounter}`}`;
+}
 
 const SAMPLE_QUESTIONS = [
   {
-    title: 'Công ty vs Cá nhân (Phạt x2)',
-    tag: 'Điều 4 & Điều 101 NĐ 15/2020',
-    text: 'Công ty tôi đăng bài sai sự thật về dịch bệnh lên fanpage thì bị phạt bao nhiêu tiền? Nếu là nhân viên tự ý đăng thì mức phạt có khác không?'
+    title: 'Xử phạt theo quy định hiện hành',
+    tag: 'Nghị định 174/2026',
+    text: 'Theo Nghị định 174/2026/NĐ-CP, tổ chức chia sẻ thông tin sai sự thật gây hoang mang dư luận trên mạng xã hội bị xử lý thế nào?'
   },
   {
     title: 'Độ tuổi vị thành niên (15 tuổi)',
     tag: 'Luật XLVPHC & NĐ 15/2020',
-    text: 'Một học sinh 15 tuổi sử dụng tài khoản mạng xã hội để đăng thông tin sai sự thật thì có bị phạt tiền không?'
+    text: 'Theo quy định có hiệu lực đến hết ngày 30/06/2026, một học sinh 15 tuổi đăng thông tin sai sự thật trên mạng xã hội có bị phạt tiền theo Nghị định 15/2020/NĐ-CP không?'
   },
   {
     title: 'Bảo vệ dữ liệu cá nhân',
@@ -32,12 +42,12 @@ const SAMPLE_QUESTIONS = [
     text: 'Theo Nghị định 13/2023/NĐ-CP và Luật Bảo vệ dữ liệu cá nhân, quyền của chủ thể dữ liệu và nghĩa vụ khi xử lý dữ liệu cá nhân nhạy cảm là gì?'
   },
   {
-    title: 'Ngoại lệ Điều 106 (Người chơi game)',
-    tag: 'Điều 106 NĐ 15/2020',
-    text: 'Người chơi game online lợi dụng trò chơi điện tử để thực hiện hành vi vi phạm pháp luật theo Điều 106 Nghị định 15/2020 bị phạt bao nhiêu?'
+    title: 'Quy định lịch sử Điều 106',
+    tag: 'NĐ 15/2020 đến 30/06/2026',
+    text: 'Theo Điều 106 Nghị định 15/2020/NĐ-CP, có hiệu lực đến hết ngày 30/06/2026, người chơi game online lợi dụng trò chơi điện tử để thực hiện hành vi vi phạm pháp luật bị phạt bao nhiêu?'
   },
   {
-    title: 'Chống ảo giác (Nghị định 9999 giả)',
+    title: 'Văn bản không có trong kho',
     tag: 'Symbolic Guardrail',
     text: 'Theo Nghị định 9999/2025/NĐ-CP thì hành vi bình luận xúc phạm người khác trên Facebook bị phạt bao nhiêu tiền?'
   },
@@ -83,6 +93,28 @@ const NODE_PALETTE = {
     radius: 3.8,
     glowScale: 3.4,
   },
+  Point: {
+    core: '#ffffff',
+    inner: '#cffafe',
+    halo: 'rgba(34, 211, 238, 0.8)',
+    outer: 'rgba(8, 145, 178, 0)',
+    bg: '#ecfeff',
+    text: '#0e7490',
+    tag: 'ĐIỂM',
+    radius: 3.5,
+    glowScale: 3.2,
+  },
+  Chapter: {
+    core: '#ffffff',
+    inner: '#dcfce7',
+    halo: 'rgba(74, 222, 128, 0.8)',
+    outer: 'rgba(22, 163, 74, 0)',
+    bg: '#f0fdf4',
+    text: '#15803d',
+    tag: 'CHƯƠNG',
+    radius: 4.1,
+    glowScale: 3.4,
+  },
   Action: {
     core: '#ffffff',
     inner: '#ffedd5',
@@ -115,6 +147,17 @@ const NODE_PALETTE = {
     tag: 'BIỆN PHÁP KHẮC PHỤC',
     radius: 4.2,
     glowScale: 3.6,
+  },
+  Precedent: {
+    core: '#ffffff',
+    inner: '#ede9fe',
+    halo: 'rgba(167, 139, 250, 0.9)',
+    outer: 'rgba(124, 58, 237, 0)',
+    bg: '#f5f3ff',
+    text: '#6d28d9',
+    tag: 'ÁN LỆ / BẢN ÁN',
+    radius: 5.1,
+    glowScale: 4.1,
   },
 };
 
@@ -894,7 +937,7 @@ RETURN d, a, k, act, p LIMIT 120;`;
               { label: 'Connect URL (Bolt)', val: 'bolt://localhost:7687', key: 'bolt' },
               { label: 'Neo4j Browser (Web)', val: 'http://localhost:7474', key: 'http' },
               { label: 'Username', val: 'neo4j', key: 'user' },
-              { label: 'Password', val: 'lawgraph2906', key: 'pass' },
+              { label: 'Authentication', val: 'Configured in backend environment', key: 'auth' },
             ].map((item) => (
               <div key={item.key} className="conn-item">
                 <div>
@@ -957,81 +1000,41 @@ RETURN d, a, k, act, p LIMIT 120;`;
 // ============================================================================
 // VŨ KHÍ 3: BẢNG ĐIỀU KHIỂN MÔ PHỎNG TÌNH HUỐNG PHÁP LÝ (INTERACTIVE WHAT-IF SANDBOX)
 // ============================================================================
-function formatVndClient(amount) {
-  if (amount == null) return '0 đồng';
-  return `${Math.round(amount).toLocaleString('vi-VN')} đồng`;
-}
-
 function WhatIfSandbox({ penaltyCalcs = [] }) {
   const [simSubject, setSimSubject] = useState('INDIVIDUAL'); // 'ORGANIZATION' | 'INDIVIDUAL'
   const [simAgeGroup, setSimAgeGroup] = useState('ADULT');    // 'ADULT' | '16_18' | '14_16' | 'UNDER_14'
-  const [simRecidivism, setSimRecidivism] = useState(false);
+  const [simulation, setSimulation] = useState(null);
+  const [simulationError, setSimulationError] = useState(null);
 
   const primary = penaltyCalcs[0];
-  if (!primary) return null;
-
-  // Suy ra khung phạt gốc của Tổ chức (hoặc Cá nhân nếu là Điều 106)
-  const artNum = Number(primary.article_number || 101);
-  const isArt106 = artNum === 106;
-  let baseMin = primary.base_min;
-  let baseMax = primary.base_max;
-  if (baseMin == null || baseMax == null) {
-    const orgRow = primary.calculations?.find((c) => c.subject === 'ORGANIZATION' && c.min_amount);
-    const indRow = primary.calculations?.find((c) => c.subject === 'INDIVIDUAL' && c.min_amount);
-    if (orgRow) {
-      baseMin = orgRow.min_amount;
-      baseMax = orgRow.max_amount;
-    } else if (indRow) {
-      baseMin = isArt106 ? indRow.min_amount : indRow.min_amount * 2;
-      baseMax = isArt106 ? indRow.max_amount : indRow.max_amount * 2;
-    } else {
-      baseMin = 10000000;
-      baseMax = 20000000;
+  const selectedAge = { ADULT: 18, '16_18': 17, '14_16': 15, UNDER_14: 13 }[simAgeGroup];
+  const simulationKey = `${primary?.action_id || ''}:${simSubject}:${selectedAge}`;
+  useEffect(() => {
+    if (!primary?.action_id || !primary.rule_supported || primary.doc_code !== '15/2020/NĐ-CP') {
+      return undefined;
     }
-  }
+    let cancelled = false;
+    axios.post(
+      `${API_BASE_URL}/penalty/simulate`,
+      { action_id: primary.action_id, subject: simSubject, age: selectedAge },
+      { headers: API_HEADERS },
+    ).then((response) => {
+      if (!cancelled) setSimulation({ key: simulationKey, data: response.data });
+    }).catch((error) => {
+      if (!cancelled) {
+        setSimulationError({
+          key: simulationKey,
+          message: error.response?.data?.detail || 'Không thể mô phỏng mức phạt lúc này.',
+        });
+      }
+    });
+    return () => { cancelled = true; };
+  }, [primary?.action_id, primary?.doc_code, primary?.rule_supported, selectedAge, simSubject, simulationKey]);
 
-  let simDisplay = '';
-  let simFormula = '';
-  let simBasis = 'Điều 4 Khoản 3 Nghị định 15/2020/NĐ-CP';
-
-  if (simRecidivism && primary.criminal_escalations?.length > 0) {
-    const ce = primary.criminal_escalations[0];
-    simDisplay = `Chuyển truy cứu Hình sự: ${ce.penalty}`;
-    simFormula = `Tái phạm / Gây hậu quả nghiêm trọng → ${ce.title}`;
-    simBasis = 'Bộ luật Hình sự 2015 (sửa đổi, bổ sung 2017 - 100/2015/QH13)';
-  } else if (simSubject === 'ORGANIZATION') {
-    if (isArt106) {
-      simDisplay = 'Không áp dụng cho Tổ chức (Điều 106 chỉ áp dụng đối với Cá nhân/Người chơi)';
-      simFormula = 'Ngoại lệ Điều 106 NĐ 15/2020';
-    } else {
-      simDisplay = `${formatVndClient(baseMin)} – ${formatVndClient(baseMax)}`;
-      simFormula = '100% khung phạt gốc áp dụng đối với Tổ chức';
-    }
-  } else {
-    // Chủ thể Cá nhân
-    const indMin = isArt106 ? baseMin : baseMin * 0.5;
-    const indMax = isArt106 ? baseMax : baseMax * 0.5;
-    if (simAgeGroup === 'UNDER_14') {
-      simDisplay = '0 đồng (Không xử phạt vi phạm hành chính)';
-      simFormula = 'Người dưới 14 tuổi chưa đủ tuổi chịu trách nhiệm VPHC';
-      simBasis = 'Điều 5 Khoản 1 Điểm a Luật Xử lý vi phạm hành chính';
-    } else if (simAgeGroup === '14_16') {
-      simDisplay = '0 đồng (Chỉ phạt Cảnh cáo, không áp dụng phạt tiền)';
-      simFormula = 'Người từ đủ 14 đến dưới 16 tuổi: Không phạt tiền';
-      simBasis = 'Điều 5 & Điều 22 Luật Xử lý vi phạm hành chính';
-    } else if (simAgeGroup === '16_18') {
-      simDisplay = `${formatVndClient(indMin * 0.5)} – ${formatVndClient(indMax * 0.5)}`;
-      simFormula = isArt106
-        ? '1/2 × mức phạt người thành niên (Điều 106)'
-        : '1/2 (Cá nhân) × 1/2 (Vị thành niên 16–<18 tuổi) = 1/4 mức Tổ chức';
-      simBasis = 'Điều 134 Khoản 3 Luật XLVPHC & Điều 4 K.3 NĐ 15/2020';
-    } else {
-      simDisplay = `${formatVndClient(indMin)} – ${formatVndClient(indMax)}`;
-      simFormula = isArt106
-        ? 'Áp dụng trực tiếp khung Cá nhân (Ngoại lệ Điều 106)'
-        : 'Cá nhân thành niên = 1/2 × mức phạt Tổ chức';
-    }
-  }
+  if (!primary?.action_id || !primary.rule_supported || primary.doc_code !== '15/2020/NĐ-CP') return null;
+  const currentSimulation = simulation?.key === simulationKey ? simulation.data : null;
+  const currentSimulationError = simulationError?.key === simulationKey ? simulationError.message : '';
+  const isSimulationLoading = !currentSimulation && !currentSimulationError;
 
   return (
     <div className="card-box sandbox-box">
@@ -1040,7 +1043,7 @@ function WhatIfSandbox({ penaltyCalcs = [] }) {
         <span>Mô phỏng Tình huống Pháp lý (Symbolic What-If Sandbox)</span>
       </div>
       <p className="sandbox-sub">
-        Thay đổi biến số trực tiếp để kiểm chứng bộ suy luận toán học tất định (Rule Engine 0ms):
+        Mỗi thay đổi được tính lại bằng quy tắc phía máy chủ và dữ liệu mức phạt trong đồ thị.
       </p>
 
       <div className="sandbox-controls">
@@ -1052,14 +1055,14 @@ function WhatIfSandbox({ penaltyCalcs = [] }) {
               className={`sandbox-pill ${simSubject === 'ORGANIZATION' ? 'active' : ''}`}
               onClick={() => setSimSubject('ORGANIZATION')}
             >
-              🏢 Tổ chức (1x)
+              🏢 Tổ chức
             </button>
             <button
               type="button"
               className={`sandbox-pill ${simSubject === 'INDIVIDUAL' ? 'active' : ''}`}
               onClick={() => setSimSubject('INDIVIDUAL')}
             >
-              👤 Cá nhân (1/2x)
+              👤 Cá nhân
             </button>
           </div>
         </div>
@@ -1087,35 +1090,23 @@ function WhatIfSandbox({ penaltyCalcs = [] }) {
           </div>
         )}
 
-        {primary.criminal_escalations?.length > 0 && (
-          <div className="sandbox-row">
-            <span className="sandbox-label">3. Mức độ & Hậu quả:</span>
-            <div className="sandbox-pills">
-              <button
-                type="button"
-                className={`sandbox-pill ${!simRecidivism ? 'active' : ''}`}
-                onClick={() => setSimRecidivism(false)}
-              >
-                Vi phạm Hành chính lần đầu
-              </button>
-              <button
-                type="button"
-                className={`sandbox-pill danger ${simRecidivism ? 'active' : ''}`}
-                onClick={() => setSimRecidivism(true)}
-              >
-                ⚠️ Tái phạm / Hậu quả nghiêm trọng (Hình sự)
-              </button>
-            </div>
-          </div>
-        )}
       </div>
 
-      <div className={`sandbox-output ${simRecidivism ? 'criminal-mode' : ''}`}>
-        <div className="sandbox-result-main">{simDisplay}</div>
-        <div className="sandbox-result-meta">
-          <span><b>Công thức:</b> {simFormula}</span>
-          <span><b>Căn cứ:</b> {simBasis}</span>
-        </div>
+      <div className="sandbox-output">
+        {isSimulationLoading ? (
+          <div className="sandbox-result-main">Đang tính lại…</div>
+        ) : currentSimulationError ? (
+          <div className="sandbox-result-main">{currentSimulationError}</div>
+        ) : currentSimulation ? (
+          <>
+            <div className="sandbox-result-main">{currentSimulation.display}</div>
+            <div className="sandbox-result-meta">
+              <span><b>Công thức:</b> {currentSimulation.formula}</span>
+              <span><b>Căn cứ:</b> {currentSimulation.basis}</span>
+              {currentSimulation.effective_to && <span><b>Hiệu lực đến:</b> {currentSimulation.effective_to}</span>}
+            </div>
+          </>
+        ) : null}
       </div>
     </div>
   );
@@ -1251,9 +1242,9 @@ function BenchmarkModal({ isOpen, onClose, data, isLoading, onRunBenchmark }) {
               <BarChart3 size={18} />
             </div>
             <div>
-              <h3>Thực nghiệm Đối chứng: Naive Vector RAG vs. Neuro-Symbolic Hybrid RAG</h3>
+              <h3>Thực nghiệm Định lượng: Naive RAG vs. Neuro-Symbolic Hybrid RAG</h3>
               <p>
-                Đánh giá định lượng tự động trên <b>{data?.total_cases || 8} kịch bản kiểm thử học thuật</b> (Chương 4 Đồ án)
+                Đánh giá khoa học trên <b>{data?.total_cases || 15} ca chuẩn vàng do chuyên gia gán nhãn</b> (5 thước đo độc lập)
               </p>
             </div>
           </div>
@@ -1266,10 +1257,16 @@ function BenchmarkModal({ isOpen, onClose, data, isLoading, onRunBenchmark }) {
           {isLoading ? (
             <div className="benchmark-loading">
               <Loader2 size={24} className="spin-icon" />
-              <span>Đang thực thi bộ kiểm thử định lượng qua 8 kịch bản pháp lý...</span>
+              <span>Đang chạy thực nghiệm định lượng trên 15 kịch bản chuẩn vàng...</span>
             </div>
           ) : data ? (
             <>
+              {data.mode === 'not_run' && (
+                <div className="benchmark-note">{data.message}</div>
+              )}
+              {data.evaluation_note && (
+                <div className="benchmark-note">{data.evaluation_note}</div>
+              )}
               <div className="benchmark-metrics-grid">
                 {(data.metrics || []).map((m, idx) => (
                   <div key={idx} className="bench-metric-card">
@@ -1300,9 +1297,11 @@ function BenchmarkModal({ isOpen, onClose, data, isLoading, onRunBenchmark }) {
                     <tr>
                       <th>Mã Ca</th>
                       <th>Kịch bản Kiểm thử Pháp lý</th>
-                      <th>Trích dẫn (Naive / Hybrid)</th>
-                      <th>Mức phạt & Tuổi (Naive / Hybrid)</th>
-                      <th>Chủ thể & Guardrail (Naive / Hybrid)</th>
+                      <th>Căn cứ Luật (N / H)</th>
+                      <th>Mức phạt (N / H)</th>
+                      <th>Guardrail (N / H)</th>
+                      <th>Hiệu lực Ngày (N / H)</th>
+                      <th>Bằng chứng (N / H)</th>
                       <th>Tốc độ</th>
                     </tr>
                   </thead>
@@ -1320,12 +1319,30 @@ function BenchmarkModal({ isOpen, onClose, data, isLoading, onRunBenchmark }) {
                         <td className="center-cell">
                           {c.n_subject_guardrail ? '✅' : '❌'} / <b>{c.h_subject_guardrail ? '✅' : '❌'}</b>
                         </td>
+                        <td className="center-cell">
+                          {c.n_temporal ? '✅' : '❌'} / <b>{c.h_temporal ? '✅' : '❌'}</b>
+                        </td>
+                        <td className="center-cell">
+                          {c.n_grounded ? '✅' : '❌'} / <b>{c.h_grounded ? '✅' : '❌'}</b>
+                        </td>
                         <td className="center-cell">{c.elapsed_seconds}s</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+              {(data.cases || []).length > 0 && (
+                <details className="benchmark-answers">
+                  <summary>Xem câu trả lời gốc để rà soát từng ca</summary>
+                  {data.cases.map((c) => (
+                    <section key={`${c.id}-answers`}>
+                      <b>{c.id}: {c.category}</b>
+                      <p><b>Naive RAG</b><br />{c.naive_answer}</p>
+                      <p><b>Hybrid RAG</b><br />{c.hybrid_answer}</p>
+                    </section>
+                  ))}
+                </details>
+              )}
             </>
           ) : null}
 
@@ -1333,11 +1350,11 @@ function BenchmarkModal({ isOpen, onClose, data, isLoading, onRunBenchmark }) {
             <button
               type="button"
               className="open-neo4j-web-btn"
-              onClick={() => onRunBenchmark(false)}
+              onClick={() => onRunBenchmark(true)}
               disabled={isLoading}
             >
               <RefreshCw size={14} />
-              <span>Chạy lại Kiểm định Symbolic tức thì</span>
+              <span>Chạy kiểm thử LLM thực tế (có thể tính phí)</span>
             </button>
             <button type="button" onClick={onClose} className="close-modal-secondary">
               Đóng bảng
@@ -1398,6 +1415,7 @@ function App() {
 
   const [activeConvId, setActiveConvId] = useState(() => conversations[0]?.id || 'conv-default');
   const [input, setInput] = useState('');
+  const [asOfDate, setAsOfDate] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [isComparisonMode, setIsComparisonMode] = useState(false);
   const [showSymbolicPanel, setShowSymbolicPanel] = useState(true);
@@ -1437,7 +1455,7 @@ function App() {
     () => conversations.find((c) => c.id === activeConvId) || conversations[0],
     [conversations, activeConvId]
   );
-  const messages = activeConversation?.messages || [];
+  const messages = activeConversation?.messages ?? EMPTY_MESSAGES;
 
   // Lưu lịch sử hội thoại vào localStorage
   useEffect(() => {
@@ -1451,7 +1469,7 @@ function App() {
   // Kiểm tra sức khỏe Backend & tải Đồ thị Neo4j 3D ngay khi mở App
   const checkBackendHealth = useCallback(() => {
     axios
-      .get(`${API_BASE_URL}/health`)
+      .get(`${API_BASE_URL}/health`, { headers: API_HEADERS })
       .then((res) => {
         setBackendStatus({
           neo4j: Boolean(res.data.neo4j_connected),
@@ -1468,6 +1486,7 @@ function App() {
     axios
       .get(`${API_BASE_URL}/graph/overview`, {
         params: { doc_code: docCode || undefined, limit: docCode ? 130 : 120 },
+        headers: API_HEADERS,
       })
       .then((res) => {
         if (res.data?.graph_view) {
@@ -1491,7 +1510,8 @@ function App() {
 
   useEffect(() => {
     checkBackendHealth();
-    fetchLiveNeo4jGraph('');
+    const initialGraphRequest = window.setTimeout(() => fetchLiveNeo4jGraph(''), 0);
+    return () => window.clearTimeout(initialGraphRequest);
   }, [checkBackendHealth, fetchLiveNeo4jGraph]);
 
   useEffect(() => {
@@ -1565,6 +1585,17 @@ function App() {
     const file = e.target.files?.[0];
     if (!file) return;
     e.target.value = '';
+    if (file.size > 10 * 1024 * 1024) {
+      setEvidenceAttachment({
+        filename: file.name,
+        char_count: 0,
+        word_count: 0,
+        extracted_text: '',
+        is_valid_evidence: false,
+        rejection_reason: 'Tệp vượt giới hạn 10 MB.',
+      });
+      return;
+    }
     setIsUploadingEvidence(true);
 
     const reader = new FileReader();
@@ -1575,7 +1606,7 @@ function App() {
         const res = await axios.post(`${API_BASE_URL}/analyze-evidence`, {
           filename: file.name,
           content_base64: base64Part,
-        });
+        }, { headers: API_HEADERS });
         setEvidenceAttachment(res.data);
       } catch (err) {
         console.error('Lỗi phân tích bằng chứng:', err);
@@ -1599,7 +1630,7 @@ function App() {
     setShowBenchmarkModal(true);
     setIsLoadingBenchmark(true);
     try {
-      const res = await axios.get(`${API_BASE_URL}/benchmark/run`, { params: { live } });
+      const res = await axios.get(`${API_BASE_URL}/benchmark/run`, { params: { live }, headers: API_HEADERS });
       setBenchmarkData(res.data);
     } catch (err) {
       console.error('Lỗi chạy benchmark:', err);
@@ -1616,10 +1647,14 @@ function App() {
     const textToSend = evidenceAttachment
       ? `[BẰNG CHỨNG ĐÍNH KÈM: ${evidenceAttachment.filename}]\nNội dung trích xuất OCR: "${evidenceAttachment.extracted_text.slice(0, 1200)}"\n\nCâu hỏi tư vấn: ${rawTyped || 'Hãy phân tích hành vi vi phạm pháp luật trong bằng chứng trên và tính mức xử phạt.'}`
       : rawTyped;
+    const asOfDateToSend = asOfDate || null;
 
-    const displayUserText = evidenceAttachment
+    const questionDisplay = evidenceAttachment
       ? `📎 [Bằng chứng: ${evidenceAttachment.filename}]\n${rawTyped || 'Phân tích hành vi vi phạm và tính mức phạt từ bằng chứng đính kèm.'}`
       : rawTyped;
+    const displayUserText = asOfDateToSend
+      ? `${questionDisplay}\n\n[Tra cứu theo ngày ${asOfDateToSend}]`
+      : questionDisplay;
 
     abortControllerRef.current?.abort();
     const controller = new AbortController();
@@ -1629,15 +1664,15 @@ function App() {
 
     const historyPayload = messages
       .slice(-4)
-      .map((m) => ({ role: m.role, text: m.text }));
+      .map((m) => ({ role: m.role === 'user' ? 'user' : 'assistant', text: m.text }));
 
-    const userMessage = { role: 'user', text: displayUserText };
+    const userMessage = { id: createMessageId(), role: 'user', text: displayUserText };
     const updatedTitle =
       messages.length === 0
         ? displayUserText.slice(0, 38) + (displayUserText.length > 38 ? '…' : '')
         : activeConversation.title;
 
-    const botMsgId = `bot-${Date.now()}`;
+    const botMsgId = createMessageId();
     const initialBotMessage = {
       id: botMsgId,
       role: 'bot',
@@ -1667,10 +1702,11 @@ function App() {
     try {
       const res = await fetch(`${API_BASE_URL}/chat/stream`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...API_HEADERS },
         signal: controller.signal,
         body: JSON.stringify({
           question: textToSend,
+          as_of_date: asOfDateToSend,
           comparison_mode: isComparisonMode,
           history: historyPayload,
         }),
@@ -1684,7 +1720,6 @@ function App() {
       const decoder = new TextDecoder('utf-8');
       let buffer = '';
       let accumulatedText = '';
-      let latestSymbolic = null;
 
       while (true) {
         const { value, done } = await reader.read();
@@ -1704,7 +1739,7 @@ function App() {
           }
 
           if (evt.type === 'meta') {
-            latestSymbolic = {
+            const latestSymbolic = {
               reasoning: evt.symbolic_reasoning,
               graph: evt.graph_view,
               sources: evt.sources,
@@ -1755,7 +1790,6 @@ function App() {
                               ...m,
                               text: finalText,
                               naiveText: evt.naive_answer,
-                              symbolicData: latestSymbolic || m.symbolicData,
                               streaming: false,
                             }
                           : m
@@ -1995,15 +2029,15 @@ function App() {
               <span>{theme === 'dark' ? 'Nền sáng' : 'Nền tối'}</span>
             </button>
 
-            {/* Nút Bảng Thực nghiệm Định lượng (Vũ khí 5) */}
+            {/* Nút mở bảng smoke test trực tiếp */}
             <button
               type="button"
               className="topbar-pill-btn benchmark-trigger-btn"
               onClick={() => handleRunBenchmark(false)}
-              title="Mở Bảng Thực nghiệm Đối chứng Naive RAG vs. Neuro-Symbolic RAG (100% Accuracy)"
+              title="Mở bảng smoke test Naive RAG và Hybrid RAG; kết quả chỉ có sau khi chạy mô hình thực tế"
             >
               <BarChart3 size={15} />
-              <span>Thực nghiệm (100%)</span>
+              <span>Kiểm thử RAG</span>
             </button>
 
             {/* Nút bật/tắt So sánh Đối chứng A/B */}
@@ -2067,7 +2101,7 @@ function App() {
               {messages.map((msg, index) => {
                 if (msg.role === 'user') {
                   return (
-                    <div key={index} className="chatgpt-user-turn">
+                    <div key={msg.id || `user-${index}`} className="chatgpt-user-turn">
                       <div className="chatgpt-user-bubble">{msg.text}</div>
                     </div>
                   );
@@ -2077,7 +2111,7 @@ function App() {
                 const stepCount = msg.symbolicData?.reasoning?.rule_steps?.length || 0;
 
                 return (
-                  <div key={index} className="chatgpt-bot-turn">
+                  <div key={msg.id || `bot-${index}`} className="chatgpt-bot-turn">
                     <div className="chatgpt-bot-avatar">
                       <Scale size={16} />
                     </div>
@@ -2204,6 +2238,9 @@ function App() {
 
         {/* Ô nhập câu hỏi nổi ở đáy phong cách ChatGPT */}
         <div className="chatgpt-composer-zone">
+          <div className="legal-disclaimer">
+            Thông tin tra cứu tự động có thể thiếu hoặc chưa cập nhật; nội dung này không thay thế tư vấn pháp lý chuyên môn.
+          </div>
           <input
             ref={evidenceInputRef}
             type="file"
@@ -2264,6 +2301,21 @@ function App() {
                 </button>
               </div>
             )}
+            <label className="as-of-date-control" title="Bỏ trống để tra cứu theo ngày hiện tại">
+              <span>Áp dụng quy định theo ngày</span>
+              <input
+                type="date"
+                value={asOfDate}
+                onChange={(event) => setAsOfDate(event.target.value)}
+                disabled={isLoading}
+                aria-label="Ngày áp dụng quy định pháp luật"
+              />
+              {asOfDate && (
+                <button type="button" onClick={() => setAsOfDate('')} disabled={isLoading}>
+                  Hôm nay
+                </button>
+              )}
+            </label>
             <textarea
               ref={textareaRef}
               rows={1}
@@ -2315,9 +2367,9 @@ function App() {
 
               <button
                 type="submit"
-                disabled={isLoading || (!input.trim() && !evidenceAttachment)}
+                disabled={isLoading || (!input.trim() && !evidenceAttachment) || (evidenceAttachment?.is_valid_evidence === false && !input.trim())}
                 className="chatgpt-send-btn"
-                title="Gửi câu hỏi (Enter)"
+                title={evidenceAttachment?.is_valid_evidence === false && !input.trim() ? "Tệp đính kèm không hợp lệ. Vui lòng gỡ tệp hoặc nhập câu hỏi cụ thể." : "Gửi câu hỏi (Enter)"}
               >
                 {isLoading ? <Loader2 size={16} className="spin-icon" /> : <Send size={15} />}
               </button>
@@ -2467,7 +2519,7 @@ function App() {
                         <div className="fact-item">
                           <span className="fact-label">Cảnh báo Guardrail:</span>
                           <span className="fact-value" style={{ color: '#dc2626' }}>
-                            {activeSymbolic.reasoning.facts.invalid_docs.join(', ')} (Không tồn tại)
+                            {activeSymbolic.reasoning.facts.invalid_docs.join(', ')} (Không có trong kho dữ liệu)
                           </span>
                         </div>
                       )}
@@ -2527,10 +2579,71 @@ function App() {
                     <WhatIfSandbox penaltyCalcs={activeSymbolic.reasoning.penalty_calculations} />
                   )}
 
+                  {activeSymbolic.reasoning?.law_paths?.length > 0 && (
+                    <div className="card-box">
+                      <div className="card-box-title">
+                        <GitBranch size={14} className="icon-purple" />
+                        <span>Đường dẫn dẫn chiếu nhiều bước</span>
+                      </div>
+                      {activeSymbolic.reasoning.law_paths.map((path, idx) => (
+                        <div key={idx} className="step-item">
+                          <div className="step-badge">
+                            {(path.nodes || []).map((node) => `Điều ${node.number}`).join(' → ')}
+                          </div>
+                          <div className="step-detail">
+                            {(path.nodes?.at(-1)?.text || '').slice(0, 900)}
+                          </div>
+                          <div className="step-basis">
+                            {path.doc_title || path.doc_code}
+                            {path.source_url && (
+                              <> • <a href={path.source_url} target="_blank" rel="noreferrer">Mở nguồn</a></>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {activeSymbolic.reasoning?.matched_precedents?.length > 0 && (
+                    <div className="card-box">
+                      <div className="card-box-title">
+                        <BookOpen size={14} className="icon-purple" />
+                        <span>Án lệ / bản án có liên kết căn cứ</span>
+                      </div>
+                      {activeSymbolic.reasoning.matched_precedents.map((precedent) => (
+                        <div key={precedent.id} className="source-card">
+                          <div className="source-header">
+                            <span className="source-title">{precedent.title}</span>
+                            <span className="source-page">{precedent.status || 'UNKNOWN'}</span>
+                          </div>
+                          <div className="source-article">
+                            {precedent.court} • {precedent.decision_number} • {precedent.decision_date}
+                          </div>
+                          <p className="source-snippet"><b>Vấn đề pháp lý:</b> {precedent.legal_issue}</p>
+                          <p className="source-snippet"><b>Kết luận:</b> {precedent.holding}</p>
+                          <p className="source-effective-date">
+                            Liên kết {precedent.relation} với Điều {precedent.article_number} {precedent.doc_code}.
+                            {precedent.status === 'UNKNOWN' && ' Chưa xác minh trạng thái án lệ.'}
+                          </p>
+                          {precedent.source_url && (
+                            <a className="source-official-link" href={precedent.source_url} target="_blank" rel="noreferrer">
+                              Mở nguồn chính thức
+                            </a>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   <div className="card-box">
                     <div className="card-box-title">
                       <ShieldCheck size={14} className="icon-purple" />
-                      <span>Các bước suy luận luật (Deterministic Rule Trace)</span>
+                      <span>
+                        Các bước suy luận luật (Deterministic Rule Trace)
+                        {activeSymbolic.reasoning?.as_of_date
+                          ? ` • áp dụng tại ${activeSymbolic.reasoning.as_of_date}`
+                          : ''}
+                      </span>
                     </div>
                     {activeSymbolic.reasoning?.rule_steps?.length > 0 ? (
                       <div className="steps-timeline">
@@ -2557,17 +2670,32 @@ function App() {
               <div className="sources-view" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <div className="card-box-title">
                   <BookOpen size={14} className="icon-primary" />
-                  <span>Đoạn trích Văn bản Luật từ PGVector</span>
+                  <span>Nguồn luật và án lệ đã truy xuất</span>
                 </div>
                 {activeSymbolic?.sources?.length > 0 ? (
                   activeSymbolic.sources.map((src, i) => (
                     <div key={i} className="source-card">
                       <div className="source-header">
                         <span className="source-title">{src.title}</span>
-                        <span className="source-page">Trang {src.page}</span>
+                        {src.page != null && <span className="source-page">Trang {src.page}</span>}
                       </div>
                       <div className="source-article">{src.article}</div>
+                      {src.source_type === 'PRECEDENT' && (
+                        <div className="source-effective-date">
+                          Quyết định ngày {src.decision_date || 'không rõ'} • trạng thái: {src.status || 'chưa xác minh'}
+                        </div>
+                      )}
+                      {(src.effective_from || src.effective_to) && (
+                        <div className="source-effective-date">
+                          Hiệu lực: {src.effective_from || 'không rõ'} đến {src.effective_to || 'chưa ghi nhận ngày kết thúc'}
+                        </div>
+                      )}
                       <p className="source-snippet">{src.snippet}</p>
+                      {src.source_url && (
+                        <a className="source-official-link" href={src.source_url} target="_blank" rel="noreferrer">
+                          Mở nguồn chính thức
+                        </a>
+                      )}
                     </div>
                   ))
                 ) : (

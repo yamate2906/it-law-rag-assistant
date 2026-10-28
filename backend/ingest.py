@@ -5,19 +5,11 @@ import os
 import re
 import sys
 import time
-import warnings
 from pathlib import Path
 from uuid import NAMESPACE_URL, uuid5
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-try:
-    from langchain_core._api.deprecation import LangChainDeprecationWarning, LangChainPendingDeprecationWarning
-    warnings.filterwarnings("ignore", category=LangChainDeprecationWarning)
-    warnings.filterwarnings("ignore", category=LangChainPendingDeprecationWarning)
-except Exception:
-    pass
-
 import psycopg2
+from sqlalchemy import create_engine
 from dotenv import load_dotenv
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -30,7 +22,9 @@ from legal_parser import (
     identify_document_by_name,
     load_corpus,
     normalize_text,
+    related_document_codes,
 )
+from vector_index import ensure_halfvec_hnsw_index
 
 BACKEND_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = BACKEND_DIR.parent
@@ -39,6 +33,12 @@ PROJECT_DIR = BACKEND_DIR.parent
 load_dotenv(BACKEND_DIR / ".env", override=True)
 
 CONNECTION_STRING = DATABASE_URL
+
+
+def _psycopg2_dsn() -> str:
+    return CONNECTION_STRING.replace("postgresql+psycopg2://", "postgresql://").replace(
+        "postgresql+psycopg://", "postgresql://"
+    )
 MAX_CHUNK_CHARS = 1800
 
 
@@ -57,7 +57,15 @@ def build_chunks_for_document(
 
     chunks: list[Document] = []
     for article in document.articles:
-        header = f"[{document.short}] Chương {article.chapter or '-'} - {article.heading()}"
+        effective_label = ""
+        effective_from = article.effective_from or document.effective_from
+        effective_to = article.effective_to or document.effective_to
+        if effective_from or effective_to:
+            effective_label = (
+                f" (hiệu lực {effective_from or 'không rõ'}"
+                f" đến {effective_to or 'hiện chưa ghi nhận ngày kết thúc'})"
+            )
+        header = f"[{document.short}{effective_label}] Chương {article.chapter or '-'} - {article.heading()}"
         source_name = Path(str(article.source)).name
         digest = fingerprints.get(source_name, "")
         metadata = {
@@ -68,6 +76,9 @@ def build_chunks_for_document(
             "article_id": article.id,
             "article_number": article.number,
             "article_title": article.title,
+            "effective_from": effective_from,
+            "effective_to": effective_to,
+            "source_url": article.source_url or document.source_url,
         }
         if digest:
             metadata["file_sha256"] = digest
@@ -135,21 +146,23 @@ def build_structured_chunks(
 def sync_existing_pgvector_metadata() -> int:
     """Đồng bộ và chuẩn hóa metadata (doc_code, doc_title, article_id, article_number, article_title)
     cho các bản ghi đã nhúng trong bảng langchain_pg_embedding để kích hoạt cầu nối Neural -> Symbolic."""
-    dsn = CONNECTION_STRING.replace("postgresql+psycopg2://", "postgresql://")
+    dsn = _psycopg2_dsn()
     conn = psycopg2.connect(dsn)
     cur = conn.cursor()
-    cur.execute("SELECT uuid, document, cmetadata FROM langchain_pg_embedding;")
+    cur.execute(
+        """
+        SELECT e.uuid, e.document, e.cmetadata
+        FROM langchain_pg_embedding e
+        JOIN langchain_pg_collection c ON c.uuid = e.collection_id
+        WHERE c.name = %s
+        """,
+        (COLLECTION_NAME,),
+    )
     rows = cur.fetchall()
 
-    existing_sources = {
-        Path(str((meta or {}).get("source", ""))).name
-        for _, _, meta in rows
-        if isinstance(meta, dict) and meta.get("source")
-    }
     docs = load_corpus(
         PROJECT_DIR / "data",
         core_only=False,
-        only_sources=existing_sources if existing_sources else None,
     )
     by_code = {d.code: d for d in docs}
 
@@ -158,27 +171,23 @@ def sync_existing_pgvector_metadata() -> int:
         meta = dict(meta or {})
         src_name = Path(str(meta.get("source", ""))).name.lower()
         doc_code = meta.get("doc_code")
-        if not doc_code:
-            if "15-2020" in src_name:
-                doc_code = "15/2020/NĐ-CP"
-            elif "24-2018" in src_name:
-                doc_code = "24/2018/QH14"
-            elif "67-2006" in src_name:
-                doc_code = "67/2006/QH11"
+        source_info = identify_document_by_name(src_name)
+        if not doc_code and source_info:
+            doc_code = source_info["code"]
 
         doc_obj = by_code.get(doc_code)
         if not doc_obj or not doc_obj.articles:
             continue
 
         norm_chunk = normalize_text(raw_text or "")
-        raw_page = int(meta.get("page", 0))
-        page_1based = int(meta.get("page_label") or (raw_page + 1))
 
         # Tìm Điều khớp theo tiêu đề "Điều X." trong chunk hoặc theo trang gần nhất
         matched_art = None
-        art_match = re.search(r"(?m)^\s*Điều\s+(\d{1,3})\s*\.", norm_chunk)
+        chunk_header = norm_chunk.splitlines()[0] if norm_chunk else ""
+        art_match = re.search(r"\bĐiều\s+(\d{1,3}[a-z]?)\s*\.", chunk_header, re.IGNORECASE)
         if art_match:
-            art_num = int(art_match.group(1))
+            raw_number = art_match.group(1)
+            art_num = int(raw_number) if raw_number.isdigit() else raw_number.lower()
             matched_art = next((a for a in doc_obj.articles if a.number == art_num), None)
 
         if matched_art is None:
@@ -187,18 +196,20 @@ def sync_existing_pgvector_metadata() -> int:
                 matched_art = next((a for a in doc_obj.articles if snippet[:60] in a.text), None)
 
         if matched_art is None:
-            candidates = [a for a in doc_obj.articles if a.page <= page_1based]
-            matched_art = candidates[-1] if candidates else doc_obj.articles[0]
+            # Keep unresolvable rows unlinked; page proximity is not reliable enough for a legal citation.
+            continue
 
         new_meta = {
             **meta,
             "source": Path(str(meta.get("source", matched_art.source))).name,
-            "page": page_1based,
             "doc_code": doc_obj.code,
             "doc_title": doc_obj.short,
             "article_id": matched_art.id,
             "article_number": matched_art.number,
             "article_title": matched_art.title,
+            "effective_from": matched_art.effective_from or doc_obj.effective_from,
+            "effective_to": matched_art.effective_to or doc_obj.effective_to,
+            "source_url": matched_art.source_url or doc_obj.source_url,
         }
         cur.execute(
             "UPDATE langchain_pg_embedding SET cmetadata = %s::json WHERE uuid = %s;",
@@ -224,64 +235,20 @@ def file_fingerprints(data_dir: Path) -> dict[str, str]:
 
 
 def get_ingested_state(fingerprints: dict[str, str], force: bool = False) -> tuple[set[str], set[str]]:
-    """Kiểm tra bảng rag_ingest_manifest và langchain_pg_embedding TRƯỚC khi đọc/OCR file.
+    """Read the existing manifest before parsing files; do not create or mutate it here.
     Trả về (skip_sources, pending_sources).
     """
-    dsn = CONNECTION_STRING.replace("postgresql+psycopg2://", "postgresql://")
-    conn = psycopg2.connect(dsn)
-    cur = conn.cursor()
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS rag_ingest_manifest (
-            collection_name TEXT NOT NULL,
-            source TEXT NOT NULL,
-            sha256 TEXT NOT NULL,
-            ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            PRIMARY KEY (collection_name, source)
-        );
-    """)
-    cur.execute(
-        "SELECT source, sha256 FROM rag_ingest_manifest WHERE collection_name = %s",
-        (COLLECTION_NAME,),
-    )
-    known: dict[str, str] = dict(cur.fetchall())
-
-    # Các mã văn bản đã hoàn tất 100% trong rag_ingest_manifest
-    completed_doc_codes: set[str] = set()
-    for done_src, done_sha in known.items():
-        if fingerprints.get(done_src) == done_sha:
-            info = identify_document_by_name(done_src)
-            if info:
-                completed_doc_codes.add(info["code"])
-
-    # Backfill manifest CHỈ cho file bản sao trùng doc_code đã hoàn tất 100% trong manifest
-    # (Không backfill theo existing_sources vì file dừng giữa chừng chỉ mới có một phần batch trong DB)
-    if not force:
-        for source, digest in fingerprints.items():
-            if source in known and known[source] == digest:
-                continue
-            doc_info = identify_document_by_name(source)
-            doc_code = doc_info["code"] if doc_info else None
-            if (
-                doc_code
-                and doc_code in completed_doc_codes
-                and "15-2020" not in source.lower()
-                and "91" not in source.lower()
-                and "100-2015" not in source.lower()
-            ):
-                known[source] = digest
-                cur.execute(
-                    """
-                    INSERT INTO rag_ingest_manifest (collection_name, source, sha256)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT (collection_name, source)
-                    DO UPDATE SET sha256 = EXCLUDED.sha256, ingested_at = NOW()
-                    """,
-                    (COLLECTION_NAME, source, digest),
-                )
-        conn.commit()
-
-    cur.close()
-    conn.close()
+    known: dict[str, str] = {}
+    try:
+        with psycopg2.connect(_psycopg2_dsn()) as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT source, sha256 FROM rag_ingest_manifest WHERE collection_name = %s",
+                (COLLECTION_NAME,),
+            )
+            known = dict(cur.fetchall())
+    except psycopg2.errors.UndefinedTable:
+        # A fresh database has no manifest yet; the first successful ingest creates it.
+        pass
 
     if force:
         return set(), set(fingerprints.keys())
@@ -294,33 +261,98 @@ def get_ingested_state(fingerprints: dict[str, str], force: bool = False) -> tup
     return skip_sources, pending_sources
 
 
-def finalize_sources(sources: set[str], fingerprints: dict[str, str]) -> None:
+def finalize_sources(
+    sources: set[str],
+    fingerprints: dict[str, str],
+    replace_doc_code: str | None = None,
+    expected_doc_code: str | None = None,
+    expected_ids_by_source: dict[str, list[str]] | None = None,
+) -> None:
     """Sau khi thêm vector mới thành công, dọn vector phiên bản cũ và cập nhật manifest."""
     if not sources:
         return
-    dsn = CONNECTION_STRING.replace("postgresql+psycopg2://", "postgresql://")
-    conn = psycopg2.connect(dsn)
-    cur = conn.cursor()
-    for source in sources:
-        digest = fingerprints.get(source)
-        if not digest:
-            continue
+    dsn = _psycopg2_dsn()
+    with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
         cur.execute("""
-            DELETE FROM langchain_pg_embedding e
-            USING langchain_pg_collection c
-            WHERE e.collection_id = c.uuid AND c.name = %s
-              AND e.cmetadata->>'source' = %s
-              AND COALESCE(e.cmetadata->>'file_sha256', '') <> %s
-        """, (COLLECTION_NAME, source, digest))
-        cur.execute("""
-            INSERT INTO rag_ingest_manifest (collection_name, source, sha256)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (collection_name, source)
-            DO UPDATE SET sha256 = EXCLUDED.sha256, ingested_at = NOW()
-        """, (COLLECTION_NAME, source, digest))
-    conn.commit()
-    cur.close()
-    conn.close()
+            CREATE TABLE IF NOT EXISTS rag_ingest_manifest (
+                collection_name TEXT NOT NULL,
+                source TEXT NOT NULL,
+                sha256 TEXT NOT NULL,
+                ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                PRIMARY KEY (collection_name, source)
+            );
+        """)
+        if replace_doc_code and sources:
+            current_sources = sorted(sources)
+            cur.execute(
+                """
+                SELECT DISTINCT e.cmetadata->>'source'
+                FROM langchain_pg_embedding e
+                JOIN langchain_pg_collection c ON e.collection_id = c.uuid
+                WHERE c.name = %s
+                  AND e.cmetadata->>'doc_code' = %s
+                  AND COALESCE(e.cmetadata->>'source', '') <> ALL(%s)
+                """,
+                (COLLECTION_NAME, replace_doc_code, current_sources),
+            )
+            stale_sources = [row[0] for row in cur.fetchall() if row[0]]
+            cur.execute(
+                """
+                DELETE FROM langchain_pg_embedding e
+                USING langchain_pg_collection c
+                WHERE e.collection_id = c.uuid AND c.name = %s
+                  AND e.cmetadata->>'doc_code' = %s
+                  AND COALESCE(e.cmetadata->>'source', '') <> ALL(%s)
+                """,
+                (COLLECTION_NAME, replace_doc_code, current_sources),
+            )
+            if stale_sources:
+                cur.execute(
+                    "DELETE FROM rag_ingest_manifest WHERE collection_name = %s AND source = ANY(%s)",
+                    (COLLECTION_NAME, stale_sources),
+                )
+        for source in sources:
+            digest = fingerprints.get(source)
+            if digest:
+                cur.execute("""
+                    DELETE FROM langchain_pg_embedding e
+                    USING langchain_pg_collection c
+                    WHERE e.collection_id = c.uuid AND c.name = %s
+                      AND e.cmetadata->>'source' = %s
+                      AND COALESCE(e.cmetadata->>'file_sha256', '') <> %s
+                """, (COLLECTION_NAME, source, digest))
+                cur.execute("""
+                    INSERT INTO rag_ingest_manifest (collection_name, source, sha256)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (collection_name, source)
+                    DO UPDATE SET sha256 = EXCLUDED.sha256, ingested_at = NOW()
+                """, (COLLECTION_NAME, source, digest))
+
+            if expected_doc_code:
+                expected_ids = (expected_ids_by_source or {}).get(source, [])
+                if expected_ids:
+                    cur.execute(
+                        """
+                        DELETE FROM langchain_pg_embedding e
+                        USING langchain_pg_collection c
+                        WHERE e.collection_id = c.uuid AND c.name = %s
+                          AND e.cmetadata->>'doc_code' = %s
+                          AND e.cmetadata->>'source' = %s
+                          AND COALESCE(e.custom_id, '') <> ALL(%s)
+                        """,
+                        (COLLECTION_NAME, expected_doc_code, source, expected_ids),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        DELETE FROM langchain_pg_embedding e
+                        USING langchain_pg_collection c
+                        WHERE e.collection_id = c.uuid AND c.name = %s
+                          AND e.cmetadata->>'doc_code' = %s
+                          AND e.cmetadata->>'source' = %s
+                        """,
+                        (COLLECTION_NAME, expected_doc_code, source),
+                    )
 
 
 # Hạn mức Free tier của gemini-embedding-001: ~30.000 token/phút và 100 request/phút
@@ -372,7 +404,7 @@ def _existing_chunk_ids(ids: list[str]) -> set[str]:
     """Các đoạn đã được lưu ở lần chạy trước (bị dừng giữa chừng) -> không nhúng lại, tiết kiệm token."""
     if not ids:
         return set()
-    dsn = CONNECTION_STRING.replace("postgresql+psycopg2://", "postgresql://")
+    dsn = _psycopg2_dsn()
     try:
         with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
             cur.execute(
@@ -393,11 +425,15 @@ def embed_and_commit_document(
     """Nhúng và lưu NGAY từng batch vào PostgreSQL; chỉ ghi manifest khi xong cả văn bản.
 
     Nếu bị dừng giữa chừng, lần chạy sau tự bỏ qua các đoạn đã lưu (theo custom_id tất định).
-    """
+        """
     if not chunks:
         return 0
 
     ids = [_chunk_id(doc) for doc in chunks]
+    expected_ids_by_source: dict[str, list[str]] = {}
+    for doc, chunk_id in zip(chunks, ids):
+        source = Path(str(doc.metadata.get("source", ""))).name
+        expected_ids_by_source.setdefault(source, []).append(chunk_id)
     done_ids = _existing_chunk_ids(ids)
     pending = [(doc, cid) for doc, cid in zip(chunks, ids) if cid not in done_ids]
     if done_ids:
@@ -460,7 +496,14 @@ def embed_and_commit_document(
         )
         print(f"   → Đã nhúng & lưu {len(chunks) - len(pending) + start + len(batch)}/{len(chunks)} đoạn của [{document.code}].")
 
-    finalize_sources(set(document.sources), fingerprints)
+    has_canonical_source = any("vbhn" in source.lower() for source in document.sources)
+    finalize_sources(
+        set(document.sources),
+        fingerprints,
+        replace_doc_code=document.code if has_canonical_source else None,
+        expected_doc_code=document.code,
+        expected_ids_by_source=expected_ids_by_source,
+    )
     return len(chunks)
 
 
@@ -477,7 +520,7 @@ def main():
     parser.add_argument(
         "--core-only",
         action="store_true",
-        help="Chỉ nhúng 3 văn bản cốt lõi (NĐ 15/2020, Luật ANM 2018, Luật CNTT 2006)",
+        help="Chỉ nhúng văn bản cốt lõi cùng NĐ 211/2025 sửa đổi NĐ 15",
     )
     parser.add_argument(
         "--force",
@@ -499,21 +542,47 @@ def main():
     data_dir = PROJECT_DIR / "data"
     fingerprints = file_fingerprints(data_dir)
     if args.core_only:
-        core_codes = {"15/2020/NĐ-CP", "24/2018/QH14", "67/2006/QH11"}
+        core_codes = {
+            "15/2020/NĐ-CP", "24/2018/QH14", "67/2006/QH11", "211/2025/NĐ-CP"
+        }
         fingerprints = {
             name: digest
             for name, digest in fingerprints.items()
             if (info := identify_document_by_name(name)) and info["code"] in core_codes
         }
+    only_sources = None
     if args.file:
         target_name = Path(args.file).name
         if target_name not in fingerprints:
             print(f"❌ Không tìm thấy file '{target_name}' trong thư mục {data_dir}.")
             return
-        fingerprints = {target_name: fingerprints[target_name]}
+        target_info = identify_document_by_name(target_name)
+        if target_info:
+            related_codes = related_document_codes(target_info["code"])
+            only_sources = {
+                name
+                for name in fingerprints
+                if (info := identify_document_by_name(name)) and info["code"] in related_codes
+            }
+        else:
+            only_sources = {target_name}
+        fingerprints = {name: fingerprints[name] for name in only_sources}
 
     print("🔍 BƯỚC 1: Kiểm tra manifest & dữ liệu đã nạp trong PostgreSQL...")
     skip_sources, pending_sources = get_ingested_state(fingerprints, force=args.force)
+    # A changed amendment or consolidated edition requires its sibling sources
+    # so the parser can build the complete current document before replacing data.
+    pending_related_codes: set[str] = set()
+    for source in pending_sources:
+        info = identify_document_by_name(source)
+        if info:
+            pending_related_codes.update(related_document_codes(info["code"]))
+    if pending_related_codes:
+        skip_sources = {
+            source
+            for source in skip_sources
+            if not (info := identify_document_by_name(source)) or info["code"] not in pending_related_codes
+        }
     if skip_sources:
         print(f"⏭  Bỏ qua {len(skip_sources)} file đã nạp (tiết kiệm 100% thời gian đọc/OCR và token API):")
         for src in sorted(skip_sources):
@@ -523,7 +592,6 @@ def main():
         print("✅ Tất cả file mục tiêu đều đã được nạp vào PostgreSQL. Không tốn thêm token nào!")
         return
 
-    only_sources = {Path(args.file).name} if args.file else None
     print(f"\n📥 BƯỚC 2: Đọc/OCR và cắt cấu trúc Điều/Khoản cho {len(pending_sources)} file chưa nạp...")
     documents = load_corpus(
         data_dir,
@@ -556,6 +624,16 @@ def main():
         total_chunks += embedded_count
         total_docs += 1
         print(f"   ✅ Đã lưu an toàn {embedded_count} vector của [{document.code}] vào PGVector & manifest.")
+
+    engine = create_engine(CONNECTION_STRING, pool_pre_ping=True)
+    try:
+        indexed_dimension = ensure_halfvec_hnsw_index(engine, COLLECTION_NAME)
+        if indexed_dimension:
+            print(f"✅ Đã tạo/kiểm tra HNSW halfvec index ({indexed_dimension} chiều).")
+    except Exception as exc:
+        print(f"⚠ Không tạo được HNSW index (vẫn có thể tìm kiếm chính xác): {exc}")
+    finally:
+        engine.dispose()
 
     print(f"\n🎉 Hoàn tất! Đã nạp thêm {total_docs} văn bản ({total_chunks} chunks). Các file đã nạp trước đó được giữ nguyên.")
 

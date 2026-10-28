@@ -15,17 +15,31 @@ Tính năng tối ưu:
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date, timedelta
 import hashlib
 import json
 import os
 import re
 import shutil
+import sys
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from pypdf import PdfReader
+
+
+def _safe_print(*values: Any, **kwargs: Any) -> None:
+    """Keep parser progress logging from crashing on legacy Windows consoles."""
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    safe_values = [
+        value.encode(encoding, errors="replace").decode(encoding)
+        if isinstance(value, str)
+        else value
+        for value in values
+    ]
+    print(*safe_values, **kwargs)
 
 try:
     import pymupdf as fitz  # Dùng tên chuẩn pymupdf để không bị cảnh báo deprecated 'fitz'
@@ -76,12 +90,32 @@ CYBERCRIME_ARTICLES = {
 
 DOCUMENT_REGISTRY: list[dict[str, Any]] = [
     {
+        "pattern": r"^2022_643_644_08-vbhn-btttt\.pdf$",
+        "code": "15/2020/NĐ-CP",
+        "title": "Nghị định 15/2020/NĐ-CP, được sửa đổi đến năm 2022 (08/VBHN-BTTTT)",
+        "short": "Nghị định 15/2020/NĐ-CP (VBHN 2022)",
+        "type": "DECREE",
+        "effective_from": "2020-04-15",
+        "source_url": "https://congbao.chinhphu.vn/van-ban/van-ban-hop-nhat-so-08-vbhn-btttt-37604/41379.htm",
+    },
+    {
+        "pattern": r"^2022_645_646_08-vbhn-btttt\.pdf$",
+        "code": "15/2020/NĐ-CP",
+        "title": "Nghị định 15/2020/NĐ-CP, được sửa đổi đến năm 2022 (08/VBHN-BTTTT)",
+        "short": "Nghị định 15/2020/NĐ-CP (VBHN 2022)",
+        "type": "DECREE",
+        "effective_from": "2020-04-15",
+        "source_url": "https://congbao.chinhphu.vn/van-ban/van-ban-hop-nhat-so-08-vbhn-btttt-37604/41379.htm",
+    },
+    {
         "pattern": r"15-2020",
         "code": "15/2020/NĐ-CP",
         "title": "Nghị định 15/2020/NĐ-CP quy định xử phạt vi phạm hành chính trong lĩnh vực "
         "bưu chính, viễn thông, tần số vô tuyến điện, công nghệ thông tin và giao dịch điện tử",
         "short": "Nghị định 15/2020/NĐ-CP",
         "type": "DECREE",
+        "effective_from": "2020-04-15",
+        "source_url": "https://vanban.chinhphu.vn/?docid=199053&pageid=27160",
     },
     {
         "pattern": r"48-cp-kgvx",
@@ -91,11 +125,31 @@ DOCUMENT_REGISTRY: list[dict[str, Any]] = [
         "type": "DECREE",
     },
     {
-        "pattern": r"24-2018",
+        "pattern": r"24-2018|Luật-An-ninh-mạng-2018",
         "code": "24/2018/QH14",
         "title": "Luật An ninh mạng 2018 (Luật số 24/2018/QH14)",
         "short": "Luật An ninh mạng 2018",
         "type": "LAW",
+        "effective_to": "2026-06-30",
+        "source_url": "https://vanban.chinhphu.vn/?classid=1&docid=206114&pageid=27160",
+    },
+    {
+        "pattern": r"^174-2026-ndcp\.docx$",
+        "code": "174/2026/NĐ-CP",
+        "title": "Nghị định 174/2026/NĐ-CP quy định xử phạt vi phạm hành chính trong lĩnh vực bưu chính, viễn thông, tần số vô tuyến điện, giao dịch điện tử và công nghệ thông tin",
+        "short": "Nghị định 174/2026/NĐ-CP",
+        "type": "DECREE",
+        "effective_from": "2026-07-01",
+        "source_url": "https://vanban.chinhphu.vn/?classid=1&docid=218185&pageid=27160&typegroupid=4",
+    },
+    {
+        "pattern": r"^330-2026-ndcp\.docx$",
+        "code": "330/2026/NĐ-CP",
+        "title": "Nghị định 330/2026/NĐ-CP quy định xử phạt vi phạm hành chính trong lĩnh vực an ninh mạng và bảo vệ dữ liệu cá nhân",
+        "short": "Nghị định 330/2026/NĐ-CP",
+        "type": "DECREE",
+        "effective_from": "2026-08-19",
+        "source_url": "https://vanban.chinhphu.vn/?docid=219266&orggroupid=2&pageid=27160",
     },
     {
         "pattern": r"luat116-2025",
@@ -103,6 +157,28 @@ DOCUMENT_REGISTRY: list[dict[str, Any]] = [
         "title": "Luật An ninh mạng 2025 (Luật số 116/2025/QH15)",
         "short": "Luật An ninh mạng 2025",
         "type": "LAW",
+        "effective_from": "2026-07-01",
+        "source_url": "https://vanban.chinhphu.vn/?classid=1&docid=216499&orggroupid=1&pageid=27160",
+    },
+    {
+        "pattern": r"^14-2022-ndcp\.signed\.pdf$",
+        "code": "14/2022/NĐ-CP",
+        "title": "Nghị định 14/2022/NĐ-CP sửa đổi, bổ sung Nghị định 15/2020/NĐ-CP và Nghị định 119/2020/NĐ-CP",
+        "short": "Nghị định 14/2022/NĐ-CP (sửa đổi)",
+        "type": "DECREE",
+        "source_url": "https://vanban.chinhphu.vn/default.aspx?docid=205256&pageid=27160",
+        "amends": ["15/2020/NĐ-CP", "119/2020/NĐ-CP"],
+    },
+    {
+        "pattern": r"^211-2025-ndcp\.signed\.pdf$",
+        "code": "211/2025/NĐ-CP",
+        "title": "Nghị định 211/2025/NĐ-CP về mật mã dân sự và sửa đổi Nghị định 15/2020/NĐ-CP",
+        "short": "Nghị định 211/2025/NĐ-CP (sửa đổi)",
+        "type": "DECREE",
+        "effective_from": "2025-09-09",
+        "source_url": "https://vanban.chinhphu.vn/?classid=1&docid=214736&pageid=27160&typegroupid=4",
+        "amends": ["15/2020/NĐ-CP"],
+        "article_filter": set(range(1, 13)),
     },
     {
         "pattern": r"67-2006",
@@ -110,6 +186,8 @@ DOCUMENT_REGISTRY: list[dict[str, Any]] = [
         "title": "Luật Công nghệ thông tin 2006 (Luật số 67/2006/QH11)",
         "short": "Luật Công nghệ thông tin 2006",
         "type": "LAW",
+        "effective_from": "2007-01-01",
+        "effective_to": "2026-06-30",
     },
     {
         "pattern": r"luat20-2023|20-2023-qh15",
@@ -166,6 +244,8 @@ DOCUMENT_REGISTRY: list[dict[str, Any]] = [
         "title": "Luật số 20/2026/QH16 sửa đổi Luật Tần số vô tuyến điện, Luật Viễn thông, Luật Giao dịch điện tử",
         "short": "Luật sửa đổi Viễn thông & GDĐT 2026",
         "type": "LAW",
+        "effective_from": "2026-10-01",
+        "amends": ["42/2009/QH12", "24/2023/QH15", "20/2023/QH15"],
     },
     {
         "pattern": r"100-2015-QH13",
@@ -183,7 +263,7 @@ DOCUMENT_REGISTRY: list[dict[str, Any]] = [
         "type": "CRIMINAL_CODE",
     },
     {
-        "pattern": r"^13nd\.signed\.pdf$",
+        "pattern": r"^13nd\.signed\.pdf$|Nghị-định-13-2023",
         "code": "13/2023/NĐ-CP",
         "title": "Nghị định 13/2023/NĐ-CP về bảo vệ dữ liệu cá nhân",
         "short": "Nghị định 13/2023/NĐ-CP (Bảo vệ DLCN)",
@@ -244,6 +324,7 @@ DOCUMENT_REGISTRY: list[dict[str, Any]] = [
         "title": "Nghị định 248/2026/NĐ-CP quy định chi tiết một số điều của Luật Thương mại điện tử",
         "short": "Nghị định 248/2026/NĐ-CP (Thương mại điện tử)",
         "type": "DECREE",
+        "effective_from": "2026-07-01",
     },
     {
         "pattern": r"333_2026",
@@ -258,6 +339,7 @@ DOCUMENT_REGISTRY: list[dict[str, Any]] = [
         "title": "Nghị định 52/2013/NĐ-CP về thương mại điện tử",
         "short": "Nghị định 52/2013/NĐ-CP (TMĐT)",
         "type": "DECREE",
+        "effective_to": "2026-06-30",
     },
     {
         "pattern": r"^85\.signed\.pdf$",
@@ -272,6 +354,7 @@ DOCUMENT_REGISTRY: list[dict[str, Any]] = [
         "title": "Luật An toàn thông tin mạng 2015 (Luật số 86/2015/QH13)",
         "short": "Luật An toàn thông tin mạng 2015",
         "type": "LAW",
+        "effective_to": "2026-06-30",
     },
     {
         "pattern": r"^71qh15\.signed\.pdf$",
@@ -300,6 +383,7 @@ DOCUMENT_REGISTRY: list[dict[str, Any]] = [
         "title": "Luật Thương mại điện tử 2025 (Luật số 122/2025/QH15)",
         "short": "Luật Thương mại điện tử 2025",
         "type": "LAW",
+        "effective_from": "2026-07-01",
     },
     {
         "pattern": r"^luatso133\.2025\.qh15\.pdf$",
@@ -307,6 +391,7 @@ DOCUMENT_REGISTRY: list[dict[str, Any]] = [
         "title": "Luật Công nghệ cao 2025 (Luật số 133/2025/QH15)",
         "short": "Luật Công nghệ cao 2025",
         "type": "LAW",
+        "effective_from": "2026-07-01",
     },
     {
         "pattern": r"^luat134\.signed\.pdf$",
@@ -314,6 +399,7 @@ DOCUMENT_REGISTRY: list[dict[str, Any]] = [
         "title": "Luật Trí tuệ nhân tạo 2025 (Luật số 134/2025/QH15)",
         "short": "Luật Trí tuệ nhân tạo 2025",
         "type": "LAW",
+        "effective_from": "2026-03-01",
     },
     {
         "pattern": r"^91\.signed\.pdf$|^91_\.pdf$",
@@ -324,17 +410,35 @@ DOCUMENT_REGISTRY: list[dict[str, Any]] = [
     },
 ]
 
+
+def related_document_codes(doc_code: str) -> set[str]:
+    """Return the transitive set of amendment documents and their targets."""
+    related = {doc_code}
+    changed = True
+    while changed:
+        changed = False
+        for entry in DOCUMENT_REGISTRY:
+            amends = set(entry.get("amends", []))
+            if entry["code"] in related or related.intersection(amends):
+                additions = {entry["code"], *amends} - related
+                if additions:
+                    related.update(additions)
+                    changed = True
+    return related
+
 POINT_LETTERS = "abcdđeghiklmnopqrstuvxy"  # thứ tự điểm trong văn bản pháp luật Việt Nam
 
 _HEADER_RE = re.compile(r"(?m)^\s*\d*\s*CÔNG BÁO\s*/\s*Số[^\n]*$")
 # Hỗ trợ cả các biến thể dấu tiếng Việt do OCR nhận diện ("Điều", "Điêu", "Điệu", "Điểu", "ĐIỀU")
 _ARTICLE_RE = re.compile(
-    r"(?m)^[ \t]*(?:Điều|Điêu|Điệu|Điểu|ĐIỀU|ĐIÊU)[ \t]+(\d{1,3})[ \t]*[.:][ \t]*(.*)$"
+    r"(?m)^[ \t]*[“\"‘«]?(?:Điều|Điêu|Điệu|Điểu|ĐIỀU|ĐIÊU)[ \t]+(\d{1,3}[a-z]?)[ \t]*[.:][ \t]*(.*)$",
+    re.IGNORECASE,
 )
 _CHAPTER_RE = re.compile(r"(?m)^[ \t]*(?:Chương|CHƯƠNG)[ \t]+([IVXLC]+)[ \t]*$")
+_SECTION_RE = re.compile(r"(?m)^[ \t]*(?:Mục|MỤC)[ \t]+(\d+|[IVXLC]+)(?:[ \t]*$|[ \t]*[.:][ \t]+[^\n]+$)")
 _CLAUSE_RE = re.compile(r"(?m)^[ \t]*(\d{1,2})\.[ \t]+")
 _POINT_RE = re.compile(r"(?m)^[ \t]*([a-zđ])\)[ \t]+")
-_ARTICLE_REF_RE = re.compile(r"Điều\s+(\d{1,3})(?!\s*\d)")
+_ARTICLE_REF_RE = re.compile(r"Điều\s+(\d{1,3}[a-z]?)(?![\w])", re.IGNORECASE)
 
 _FINE_RE = re.compile(
     r"Ph\s*ạt\s+ti\s*ền\s+t\s*ừ\s+([\d.\s]+?)\s*đồng\s+đến\s+([\d.\s]+?)\s*đồng",
@@ -391,21 +495,25 @@ class Clause:
 @dataclass
 class Article:
     doc_code: str
-    number: int
+    number: int | str
     title: str
     chapter: str
     text: str
     source: str
     page: int
     clauses: list[Clause] = field(default_factory=list)
-    references: list[int] = field(default_factory=list)
+    references: list[int | str] = field(default_factory=list)
+    section: str | None = None
+    effective_from: str | None = None
+    effective_to: str | None = None
+    source_url: str | None = None
 
     @property
     def id(self) -> str:
         return article_id(self.doc_code, self.number)
 
     def heading(self) -> str:
-        return f"Điều {self.number}. {self.title}".strip() if self.number > 0 else self.title
+        return f"Điều {self.number}. {self.title}".strip() if self.number else self.title
 
 
 @dataclass
@@ -414,22 +522,56 @@ class LegalDocument:
     title: str
     short: str
     doc_type: str
+    effective_from: str | None = None
+    effective_to: str | None = None
+    source_url: str | None = None
+    issuing_body: str | None = None
+    amends: list[str] = field(default_factory=list)
     sources: list[str] = field(default_factory=list)
     articles: list[Article] = field(default_factory=list)
+    historical_articles: list[Article] = field(default_factory=list)
 
 
-def article_id(doc_code: str, number: int) -> str:
+def article_id(doc_code: str, number: int | str) -> str:
     return f"{doc_code}:Điều {number}"
 
 
-def clause_id(doc_code: str, article_number: int, clause_number: int) -> str:
+def clause_id(doc_code: str, article_number: int | str, clause_number: int) -> str:
     return f"{article_id(doc_code, article_number)}:Khoản {clause_number}"
+
+
+REPEALED_15_ARTICLES: set[int | str] = (
+    set(range(5, 74))
+    | {75, 77, 96, "93a", "93b", "114a", "119a"}
+    | set(range(98, 125))
+)
+
+
+def apply_effective_dates(document: LegalDocument) -> None:
+    """Attach document validity and mark provisions repealed by Nghị định 174/2026."""
+    for article in [*document.articles, *document.historical_articles]:
+        article.effective_from = article.effective_from or document.effective_from
+        article.effective_to = article.effective_to or document.effective_to
+        if document.code == "15/2020/NĐ-CP" and article.number in REPEALED_15_ARTICLES:
+            article.effective_to = "2026-06-30"
+
+
+def _article_number(raw: str) -> int | str:
+    value = raw.lower()
+    return int(value) if value.isdigit() else value
+
+
+def _article_number_key(number: int | str) -> tuple[int, str]:
+    match = re.fullmatch(r"(\d+)([a-z]?)", str(number).lower())
+    if not match:
+        return (0, str(number).lower())
+    return int(match.group(1)), match.group(2)
 
 
 # ---------------------------------------------------------------------------
 # OCR & Cache cho PDF Scan và File Ảnh
 # ---------------------------------------------------------------------------
-def _configure_tesseract() -> str:
+def _configure_tesseract() -> tuple[str, str]:
     if pytesseract is None or Image is None:
         raise RuntimeError("Cần cài Pillow và pytesseract để chạy OCR.")
     tesseract_exe = shutil.which("tesseract")
@@ -439,10 +581,26 @@ def _configure_tesseract() -> str:
     if not tesseract_exe:
         raise RuntimeError("Chưa cài Tesseract OCR hoặc chưa thêm tesseract.exe vào PATH.")
     pytesseract.pytesseract.tesseract_cmd = str(tesseract_exe)
+
     local_tessdata = Path.home() / "AppData/Local/Tesseract-OCR/tessdata"
-    if local_tessdata.exists():
-        return f"--psm 6 --tessdata-dir {local_tessdata.as_posix()}"
-    return "--psm 6"
+    system_tessdata = Path("C:/Program Files/Tesseract-OCR/tessdata")
+
+    tessdata_path = None
+    if local_tessdata.exists() and any(local_tessdata.glob("*.traineddata")):
+        tessdata_path = local_tessdata
+    elif system_tessdata.exists() and any(system_tessdata.glob("*.traineddata")):
+        tessdata_path = system_tessdata
+
+    has_vie = False
+    if tessdata_path and (tessdata_path / "vie.traineddata").exists():
+        has_vie = True
+
+    config = "--psm 6"
+    if tessdata_path and tessdata_path != system_tessdata:
+        config += f" --tessdata-dir {tessdata_path.as_posix()}"
+
+    lang = "vie+eng" if has_vie else "eng"
+    return config, lang
 
 
 def _ocr_cache_path(path: Path) -> Path:
@@ -469,18 +627,32 @@ def _pil_from_pixmap(pixmap) -> Any:
     return Image.frombytes("RGB", (rgb_pix.width, rgb_pix.height), rgb_pix.samples)
 
 
-def _read_pdf_pages(pdf: Path) -> list[str]:
+def _read_pdf_pages(
+    pdf: Path, max_pages: int | None = None, use_cache: bool = True
+) -> list[str]:
+    if max_pages is not None and fitz is not None:
+        with fitz.open(pdf) as document:
+            if len(document) > max_pages:
+                raise ValueError(f"PDF có {len(document)} trang; giới hạn là {max_pages} trang.")
+
     try:
         reader = PdfReader(str(pdf))
         pages = [normalize_text(page.extract_text() or "") for page in reader.pages]
-        if sum(len(page.strip()) for page in pages) >= 200:
-            return [_HEADER_RE.sub("", page) for page in pages]
     except Exception:
         pages = []
 
+    # OCR only pages without a usable text layer; a few signature pages must not
+    # make the rest of a scanned document look searchable.
+    if pages and all(len(page.strip()) >= 40 for page in pages):
+        return [_HEADER_RE.sub("", page) for page in pages]
+    if not pages and max_pages is not None and fitz is not None:
+        with fitz.open(pdf) as document:
+            if len(document) > max_pages:
+                raise ValueError(f"PDF có {len(document)} trang; giới hạn là {max_pages} trang.")
+
     # Kiểm tra bộ nhớ đệm OCR trên đĩa trước khi chạy Tesseract
-    cache_file = _ocr_cache_path(pdf)
-    if cache_file.exists():
+    cache_file = _ocr_cache_path(pdf) if use_cache else None
+    if cache_file is not None and cache_file.exists():
         try:
             cached_pages = json.loads(cache_file.read_text(encoding="utf-8"))
             if isinstance(cached_pages, list) and cached_pages:
@@ -490,26 +662,45 @@ def _read_pdf_pages(pdf: Path) -> list[str]:
 
     if fitz is None:
         raise RuntimeError("PDF scan cần cài PyMuPDF (pymupdf) để render trang ảnh cho OCR.")
-    ocr_config = _configure_tesseract()
+    ocr_config, ocr_lang = _configure_tesseract()
 
     try:
         with fitz.open(pdf) as scanned:
             total_pages = len(scanned)
-            print(f"[OCR] Đang nhận diện văn bản từ PDF scan: {pdf.name} ({total_pages} trang)...", flush=True)
-            images = []
-            for page in scanned:
-                pixmap = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), colorspace=fitz.csGRAY, alpha=False)
-                images.append(_pil_from_pixmap(pixmap))
+            if max_pages is not None and total_pages > max_pages:
+                raise ValueError(f"PDF có {total_pages} trang; giới hạn là {max_pages} trang.")
+            _safe_print(f"[OCR] Đang nhận diện văn bản từ PDF scan: {pdf.name} ({total_pages} trang)...", flush=True)
+            if not pages:
+                pages = [""] * total_pages
+            if len(pages) < total_pages:
+                pages.extend([""] * (total_pages - len(pages)))
+            needs_ocr = [i for i, text in enumerate(pages) if len(text.strip()) < 40]
+            workers = min(4, os.cpu_count() or 2)
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                for start in range(0, len(needs_ocr), workers):
+                    page_indexes = needs_ocr[start : start + workers]
+                    images = []
+                    for index in page_indexes:
+                        pixmap = scanned[index].get_pixmap(
+                            matrix=fitz.Matrix(300 / 72, 300 / 72),
+                            colorspace=fitz.csGRAY,
+                            alpha=False,
+                        )
+                        images.append(_pil_from_pixmap(pixmap))
 
-        def _ocr_single(img):
-            return normalize_text(pytesseract.image_to_string(img, lang="vie+eng", config=ocr_config))
-
-        workers = min(6, os.cpu_count() or 4)
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            ocr_pages = list(pool.map(_ocr_single, images))
+                    recognized = pool.map(
+                        lambda img: normalize_text(
+                            pytesseract.image_to_string(img, lang=ocr_lang, config=ocr_config)
+                        ),
+                        images,
+                    )
+                    for index, text in zip(page_indexes, recognized):
+                        pages[index] = text
+            ocr_pages = pages
 
         try:
-            cache_file.write_text(json.dumps(ocr_pages, ensure_ascii=False), encoding="utf-8")
+            if cache_file is not None:
+                cache_file.write_text(json.dumps(ocr_pages, ensure_ascii=False), encoding="utf-8")
         except Exception:
             pass
     except Exception as exc:
@@ -518,10 +709,10 @@ def _read_pdf_pages(pdf: Path) -> list[str]:
     return [_HEADER_RE.sub("", page) for page in ocr_pages]
 
 
-def _read_image_file(image_path: Path) -> list[str]:
+def _read_image_file(image_path: Path, use_cache: bool = True) -> list[str]:
     """Đọc và OCR trực tiếp file ảnh (.png, .jpg, .jpeg, .webp, .bmp, .tif, .tiff)."""
-    cache_file = _ocr_cache_path(image_path)
-    if cache_file.exists():
+    cache_file = _ocr_cache_path(image_path) if use_cache else None
+    if cache_file is not None and cache_file.exists():
         try:
             cached_pages = json.loads(cache_file.read_text(encoding="utf-8"))
             if isinstance(cached_pages, list) and cached_pages:
@@ -529,9 +720,9 @@ def _read_image_file(image_path: Path) -> list[str]:
         except Exception:
             pass
 
-    ocr_config = _configure_tesseract()
+    ocr_config, ocr_lang = _configure_tesseract()
     try:
-        print(f"[OCR] Đang nhận diện văn bản từ file ảnh: {image_path.name}...", flush=True)
+        _safe_print(f"[OCR] Đang nhận diện văn bản từ file ảnh: {image_path.name}...", flush=True)
         with Image.open(image_path) as raw_img:
             pages_out: list[str] = []
             n_frames = getattr(raw_img, "n_frames", 1)
@@ -539,10 +730,11 @@ def _read_image_file(image_path: Path) -> list[str]:
                 if n_frames > 1:
                     raw_img.seek(frame_idx)
                 rgb_img = raw_img.convert("RGB")
-                text = pytesseract.image_to_string(rgb_img, lang="vie+eng", config=ocr_config)
+                text = pytesseract.image_to_string(rgb_img, lang=ocr_lang, config=ocr_config)
                 pages_out.append(normalize_text(text))
         try:
-            cache_file.write_text(json.dumps(pages_out, ensure_ascii=False), encoding="utf-8")
+            if cache_file is not None:
+                cache_file.write_text(json.dumps(pages_out, ensure_ascii=False), encoding="utf-8")
         except Exception:
             pass
         return [_HEADER_RE.sub("", p) for p in pages_out]
@@ -550,12 +742,14 @@ def _read_image_file(image_path: Path) -> list[str]:
         raise RuntimeError(f"OCR ảnh thất bại cho {image_path.name}: {exc}") from exc
 
 
-def _read_pages(path: Path) -> list[str]:
+def _read_pages(
+    path: Path, max_pages: int | None = None, use_cache: bool = True
+) -> list[str]:
     suffix = path.suffix.lower()
     if suffix == ".pdf":
-        return _read_pdf_pages(path)
+        return _read_pdf_pages(path, max_pages=max_pages, use_cache=use_cache)
     if suffix in IMAGE_SUFFIXES:
-        return _read_image_file(path)
+        return _read_image_file(path, use_cache=use_cache)
     if suffix in {".txt", ".md"}:
         return [normalize_text(path.read_text(encoding="utf-8-sig", errors="replace"))]
     if suffix == ".docx":
@@ -588,6 +782,11 @@ def _identify_document(pdf: Path, first_page: str) -> dict[str, Any]:
     match = re.search(r"(?:Luật\s+)?Số\s*:\s*(\d+/\d{4}/[A-ZĐ0-9\-]+)", first_page, re.IGNORECASE)
     code = match.group(1).upper() if match else pdf.stem
     return {"code": code, "title": code, "short": code, "type": "OTHER"}
+
+
+def _is_consolidated_source(source: str) -> bool:
+    normalized = unicodedata.normalize("NFC", Path(source).name).lower()
+    return "nội-dung-hợp-nhất" in normalized or "vbhn" in normalized
 
 
 def _sequential_matches(pattern: re.Pattern, text: str, keys: list[str]):
@@ -629,7 +828,9 @@ def _split_clauses(body: str, parse_fines: bool = True) -> list[Clause]:
     return clauses
 
 
-def _parse_articles(meta: dict[str, Any], pdf: Path, pages: list[str], last_number: int) -> list[Article]:
+def _parse_articles(
+    meta: dict[str, Any], pdf: Path, pages: list[str], last_number: int | str
+) -> list[Article]:
     offsets, chunks, cursor = [], [], 0
     for page_text in pages:
         offsets.append(cursor)
@@ -645,35 +846,49 @@ def _parse_articles(meta: dict[str, Any], pdf: Path, pages: list[str], last_numb
         return page + 1
 
     chapters = [(m.start(), m.group(1)) for m in _CHAPTER_RE.finditer(full)]
+    sections = [(m.start(), m.group(1)) for m in _SECTION_RE.finditer(full)]
     raw_matches = list(_ARTICLE_RE.finditer(full))
-    article_filter: set[int] | None = meta.get("article_filter")
+    article_filter: set[int | str] | None = meta.get("article_filter")
 
     headers = []
+    last_key = _article_number_key(last_number)
     for idx, match in enumerate(raw_matches):
-        number = int(match.group(1))
-        if number <= last_number:
+        number = _article_number(match.group(1))
+        if article_filter is not None and number not in article_filter:
+            continue
+        number_key = _article_number_key(number)
+        if number_key <= last_key:
             continue
         # Chống nhảy cóc số Điều do trích dẫn Điều của luật sửa đổi hoặc lỗi OCR (VD: Điều 1 nhảy vọt lên Điều 200 rồi quay lại Điều 2)
-        if article_filter is None and last_number > 0 and (number - last_number) > 25:
-            upcoming_numbers = [int(m.group(1)) for m in raw_matches[idx + 1 : idx + 8]]
-            if any(last_number < u <= last_number + 10 for u in upcoming_numbers):
+        last_base = last_key[0]
+        number_base = number_key[0]
+        if article_filter is None and last_base > 0 and (number_base - last_base) > 25:
+            upcoming_numbers = [
+                _article_number_key(_article_number(m.group(1)))
+                for m in raw_matches[idx + 1 : idx + 8]
+            ]
+            if any(last_key < upcoming and upcoming[0] <= last_base + 10 for upcoming in upcoming_numbers):
                 continue
         headers.append(match)
-        last_number = number
+        last_key = number_key
 
     parse_fines = meta.get("type") != "CRIMINAL_CODE"
 
     articles = []
     for index, match in enumerate(headers):
-        number = int(match.group(1))
+        number = _article_number(match.group(1))
         if article_filter is not None and number not in article_filter:
             continue
         start = match.start()
         end = headers[index + 1].start() if index + 1 < len(headers) else len(full)
-        # Cắt bỏ tiêu đề Chương tiếp theo nằm trong khoảng của Điều hiện tại
+        # Cắt bỏ tiêu đề Chương hoặc Mục tiếp theo nằm trong khoảng của Điều hiện tại
         for chapter_pos, _ in chapters:
             if start < chapter_pos < end:
                 end = chapter_pos
+                break
+        for section_pos, _ in sections:
+            if start < section_pos < end:
+                end = section_pos
                 break
         block = full[start:end].strip()
         lines = block.split("\n")
@@ -685,23 +900,33 @@ def _parse_articles(meta: dict[str, Any], pdf: Path, pages: list[str], last_numb
             body_start += 1
         body = "\n".join(lines[body_start:])
         chapter = ""
+        current_chapter_pos = -1
         for chapter_pos, chapter_name in chapters:
             if chapter_pos < start:
                 chapter = chapter_name
-        refs = sorted(
-            {int(r) for r in _ARTICLE_REF_RE.findall(body) if int(r) != number}
-        )
+                current_chapter_pos = chapter_pos
+        section = ""
+        for section_pos, section_name in sections:
+            if current_chapter_pos < section_pos < start:
+                section = section_name
+        refs = {
+            _article_number(r)
+            for r in _ARTICLE_REF_RE.findall(body)
+            if _article_number(r) != number
+        }
         articles.append(
             Article(
                 doc_code=meta["code"],
                 number=number,
                 title=" ".join(title.split()),
                 chapter=chapter,
+                section=section or None,
                 text=" ".join(block.split()),
                 source=pdf.name,
                 page=page_of(start),
                 clauses=_split_clauses(body, parse_fines=parse_fines),
-                references=refs,
+                references=sorted(refs, key=_article_number_key),
+                source_url=meta.get("source_url"),
             )
         )
     return articles
@@ -726,11 +951,32 @@ def _fallback_page_articles(meta: dict[str, Any], path: Path, pages: list[str], 
                 source=path.name,
                 page=idx,
                 clauses=[],
-                references=sorted({int(r) for r in _ARTICLE_REF_RE.findall(clean_page)}),
+                references=sorted(
+                    {_article_number(r) for r in _ARTICLE_REF_RE.findall(clean_page)},
+                    key=_article_number_key,
+                ),
+                source_url=meta.get("source_url"),
             )
         )
     return articles
 
+
+def infer_issuing_body(doc_code: str, doc_type: str = "") -> str:
+    """Suy luận cơ quan ban hành hoặc cơ quan quản lý chuyên ngành văn bản QPPL.
+    Theo Luật số 20/2026/QH16, thẩm quyền quản lý nhà nước về viễn thông, tần số vô tuyến điện,
+    giao dịch điện tử và công nghệ thông tin được chuyển giao sang Bộ Khoa học và Công nghệ."""
+    code_upper = (doc_code or "").upper()
+    if "BKHCN" in code_upper or "26/2026" in code_upper:
+        return "Bộ Khoa học và Công nghệ"
+    if "TT-BTTTT" in code_upper or "VBHN-BTTTT" in code_upper:
+        return "Bộ Thông tin và Truyền thông"
+    if "20/2026/QH16" in code_upper:
+        return "Quốc hội"
+    if "QH" in code_upper or doc_type in {"LAW", "CRIMINAL_CODE"}:
+        return "Quốc hội"
+    if "NĐ-CP" in code_upper or "ND-CP" in code_upper or "CP" in code_upper or doc_type == "DECREE":
+        return "Chính phủ"
+    return "Cơ quan Nhà nước có thẩm quyền"
 
 def load_corpus(
     data_dir: Path,
@@ -740,7 +986,9 @@ def load_corpus(
 ) -> list[LegalDocument]:
     """Đọc tài liệu trong data/, hỗ trợ bỏ qua các file đã nạp (skip_sources) để tiết kiệm thời gian và token."""
     documents: dict[str, LegalDocument] = {}
-    core_codes = {"15/2020/NĐ-CP", "24/2018/QH14", "67/2006/QH11"}
+    core_codes = {
+        "15/2020/NĐ-CP", "24/2018/QH14", "67/2006/QH11", "211/2025/NĐ-CP"
+    }
     skip_set = skip_sources or set()
 
     files = sorted(
@@ -752,7 +1000,7 @@ def load_corpus(
         if only_sources is not None and pdf.name not in only_sources:
             continue
         if pdf.name in skip_set:
-            print(f"⏭️ [SKIP] {pdf.name}: Đã nạp vào hệ thống trước đó -> Bỏ qua, không đọc/OCR lại.")
+            _safe_print(f"⏭️ [SKIP] {pdf.name}: Đã nạp vào hệ thống trước đó -> Bỏ qua, không đọc/OCR lại.")
             continue
 
         known_meta = identify_document_by_name(pdf)
@@ -762,12 +1010,12 @@ def load_corpus(
         try:
             pages = _read_pages(pdf)
         except Exception as exc:
-            print(f"[PARSER] Bỏ qua {pdf.name}: {exc}")
+            _safe_print(f"[PARSER] Bỏ qua {pdf.name}: {exc}")
             continue
 
         total_chars = sum(len(p.strip()) for p in pages)
         if total_chars < 30:
-            print(f"[PARSER] Bỏ qua {pdf.name}: File rỗng hoặc không có chữ ({total_chars} ký tự).")
+            _safe_print(f"[PARSER] Bỏ qua {pdf.name}: File rỗng hoặc không có chữ ({total_chars} ký tự).")
             continue
 
         meta = _identify_document(pdf, pages[0] if pages else "")
@@ -781,35 +1029,119 @@ def load_corpus(
                 title=meta["title"],
                 short=meta.get("short", meta["code"]),
                 doc_type=meta.get("type", "OTHER"),
+                effective_from=meta.get("effective_from"),
+                effective_to=meta.get("effective_to"),
+                source_url=meta.get("source_url"),
+                issuing_body=infer_issuing_body(meta["code"], meta.get("type", "OTHER")),
+                amends=list(meta.get("amends", [])),
             )
             documents[meta["code"]] = document
             new_articles = _parse_articles(meta, pdf, pages, 0)
             if not new_articles and meta.get("article_filter") is None:
                 new_articles = _fallback_page_articles(meta, pdf, pages, start_index=1)
-                print(
+                _safe_print(
                     f"[PARSER] {pdf.name}: Không chia theo Điều -> Đã nạp theo {len(new_articles)} trang nội dung -> {document.code}"
                 )
             else:
-                print(f"[PARSER] {pdf.name}: {len(new_articles)} Điều -> {document.code}")
+                _safe_print(f"[PARSER] {pdf.name}: {len(new_articles)} Điều -> {document.code}")
             document.sources.append(pdf.name)
             document.articles.extend(new_articles)
         else:
+            incoming_consolidated = _is_consolidated_source(pdf.name)
+            existing_consolidated = any(_is_consolidated_source(src) for src in document.sources)
+            if incoming_consolidated and not existing_consolidated:
+                canonical_articles = _parse_articles(meta, pdf, pages, 0)
+                if canonical_articles:
+                    document.sources = [pdf.name]
+                    document.articles = canonical_articles
+                    document.title = meta["title"]
+                    document.short = meta.get("short", meta["code"])
+                    document.doc_type = meta.get("type", "OTHER")
+                    document.effective_from = meta.get("effective_from")
+                    document.effective_to = meta.get("effective_to")
+                    document.source_url = meta.get("source_url")
+                    document.issuing_body = infer_issuing_body(meta["code"], meta.get("type", "OTHER"))
+                    document.amends = list(meta.get("amends", []))
+                    _safe_print(
+                        f"[PARSER] {pdf.name}: bản hợp nhất được chọn làm bản chuẩn ({len(canonical_articles)} Điều) -> {document.code}"
+                    )
+                    continue
+            if existing_consolidated and not incoming_consolidated:
+                if pdf.name not in document.sources:
+                    document.sources.append(pdf.name)
+                _safe_print(f"[PARSER] Bỏ qua bản gốc {pdf.name}; đã chọn bản hợp nhất cho {document.code}")
+                continue
+
             last = document.articles[-1].number if document.articles else 0
             continued_articles = _parse_articles(meta, pdf, pages, last)
             if continued_articles:
                 document.sources.append(pdf.name)
                 document.articles.extend(continued_articles)
-                print(f"[PARSER] {pdf.name}: +{len(continued_articles)} Điều (nối tiếp) -> {document.code}")
+                _safe_print(f"[PARSER] {pdf.name}: +{len(continued_articles)} Điều (nối tiếp) -> {document.code}")
             else:
                 alt_articles = _parse_articles(meta, pdf, pages, 0)
                 if len(alt_articles) >= len(document.articles) and alt_articles:
                     document.sources = [pdf.name]
                     document.articles = alt_articles
-                    print(
+                    _safe_print(
                         f"[PARSER] {pdf.name}: {len(alt_articles)} Điều (thay thế bản cũ ít Điều hơn) -> {document.code}"
                     )
                 else:
-                    print(f"[PARSER] Bỏ qua bản trùng {pdf.name} ({len(alt_articles)} Điều) -> đã có {document.code}")
+                    if pdf.name not in document.sources:
+                        document.sources.append(pdf.name)
+                    _safe_print(f"[PARSER] Bỏ qua bản trùng {pdf.name} ({len(alt_articles)} Điều) -> đã có {document.code}")
+    # Overlay the provisions expressly added or replaced by Nghị định 211/2025.
+    # This keeps Nghị định 15 as the queryable legal instrument while preserving
+    # the amendment's effective date and official source for those articles.
+    amendment_path = data_dir / "211-2025-ndcp.signed.pdf"
+    target_15 = documents.get("15/2020/NĐ-CP")
+    if target_15 is not None and amendment_path.is_file():
+        amendment_meta = identify_document_by_name(amendment_path)
+        if amendment_meta:
+            try:
+                amendment_pages = _read_pages(amendment_path)
+                targets = {"93a", "93b", 114, "114a"}
+                overlay_meta = {**amendment_meta, "article_filter": targets}
+                overlays = _parse_articles(overlay_meta, amendment_path, amendment_pages, 0)
+                overlay_by_number = {article.number: article for article in overlays}
+                if targets.issubset(overlay_by_number.keys()):
+                    previous_by_number = {
+                        article.number: article
+                        for article in target_15.articles
+                        if article.number in overlay_by_number
+                    }
+                    amendment_effective_from = amendment_meta.get("effective_from")
+                    if amendment_effective_from:
+                        previous_valid_to = (
+                            date.fromisoformat(amendment_effective_from) - timedelta(days=1)
+                        ).isoformat()
+                        for article in previous_by_number.values():
+                            article.effective_to = previous_valid_to
+                    target_15.historical_articles.extend(previous_by_number.values())
+                    for number, article in overlay_by_number.items():
+                        article.doc_code = target_15.code
+                        article.effective_from = amendment_meta.get("effective_from")
+                        article.source_url = amendment_meta.get("source_url")
+                        article.source = amendment_path.name
+                    target_15.articles = [
+                        article for article in target_15.articles
+                        if article.number not in overlay_by_number
+                    ] + list(overlay_by_number.values())
+                    target_15.articles.sort(key=lambda article: _article_number_key(article.number))
+                    if amendment_path.name not in target_15.sources:
+                        target_15.sources.append(amendment_path.name)
+                    _safe_print(
+                        f"[PARSER] Đã áp dụng {len(overlays)} Điều sửa đổi từ {amendment_path.name} vào {target_15.code}"
+                    )
+                else:
+                    _safe_print(
+                        f"[PARSER] Không áp dụng sửa đổi NĐ 211: thiếu Điều {sorted(str(n) for n in targets - overlay_by_number.keys())}"
+                    )
+            except Exception as exc:
+                _safe_print(f"[PARSER] Không đọc được sửa đổi NĐ 211 cho NĐ 15: {exc}")
+
+    for document in documents.values():
+        apply_effective_dates(document)
     return list(documents.values())
 
 
@@ -822,6 +1154,8 @@ if __name__ == "__main__":
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     for doc in load_corpus(DATA_DIR):
         fines = sum(1 for a in doc.articles for c in a.clauses if c.fine_min)
-        print(f"{doc.code} ({doc.short}): {len(doc.articles)} Điều, {fines} khoản có khung phạt tiền")
+        _safe_print(f"{doc.code} ({doc.short}): {len(doc.articles)} Điều, {fines} khoản có khung phạt tiền")
         for art in doc.articles[:2]:
-            print("  ", art.id, "|", art.heading(), "| trang", art.page, "| khoản:", len(art.clauses))
+            _safe_print("  ", art.id, "|", art.heading(), "| trang", art.page, "| khoản:", len(art.clauses))
+
+
