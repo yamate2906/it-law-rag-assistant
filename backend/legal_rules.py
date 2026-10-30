@@ -24,7 +24,7 @@ DECREE_RULES: dict[str, dict] = {
         # được áp dụng đối với hành vi vi phạm hành chính của tổ chức, trừ quy định tại Điều 106
         # Nghị định này. Trường hợp cá nhân có hành vi vi phạm như của tổ chức thì mức phạt tiền
         # bằng 1/2 mức phạt tiền đối với tổ chức."
-        "scope": (5, 113),  # Chương II (Điều 5) -> Chương VII (Điều 113)
+        "scope": (5, 119),  # Chương II (Điều 5) -> Chương VII (Điều 113-119, bao phủ Điều 114 & 114a theo NĐ 211/2025)
         "base_subject": ORGANIZATION,
         "individual_ratio": 0.5,
         "individual_base_articles": {106},  # Điều 106: vi phạm của người chơi (cá nhân)
@@ -36,6 +36,7 @@ DECREE_RULES: dict[str, dict] = {
             ((57, 73), 100_000_000, "tần số vô tuyến điện"),
             ((74, 106), 100_000_000, "công nghệ thông tin"),
             ((107, 112), 40_000_000, "giao dịch điện tử"),
+            ((113, 119), 100_000_000, "an toàn thông tin mạng, mật mã dân sự"),
         ],
         "cap_basis": "Điều 4 khoản 1, 2 Nghị định 15/2020/NĐ-CP",
     },
@@ -226,7 +227,7 @@ _EXACT_AGE_PATTERN = re.compile(r"(?<!dưới\s)(?<!dưới\s\s)\b(\d{1,2})\s*tu
 _MINOR_PATTERN = re.compile(r"\b(trẻ em|vị thành niên|chưa thành niên)\b", re.IGNORECASE)
 _ARTICLE_PATTERN = re.compile(r"Điều\s+(\d{1,3})\s*([a-z]?)(?![\w])", re.IGNORECASE)
 _DOC_CODE_PATTERN = re.compile(r"(\d+/\d{4}/(?:NĐ-CP|ND-CP|QH\d{1,2}|VBHN-[A-ZĐ0-9\-]+))", re.IGNORECASE)
-_DECREE_PATTERN = re.compile(r"(?:ngh[iị]\s*[dđ][iị]nh)(?:\s+s[oố])?\s*(\d+)", re.IGNORECASE)
+_DECREE_PATTERN = re.compile(r"(?:ngh[iị]\s*[dđ][iị]nh|\bn[dđ]\b)(?:\s+s[oố])?\s*(\d+)", re.IGNORECASE)
 
 
 def _extract_age(text: str) -> tuple[int | None, str | None]:
@@ -362,120 +363,144 @@ def _individual_cap(config: dict, article_number: int | str):
     return None, None
 
 
+_AGE_BANDS_NEEDING_EXACT_AGE = {"UNDER_16_UNSPECIFIED", "UNDER_18_UNSPECIFIED"}
+
+_AGE_RANGE_NEEDS_EXACT_AGE_DETAIL = (
+    "Khoảng tuổi được nêu đi qua mốc 14 hoặc 16 tuổi; cần tuổi chính xác trước khi áp dụng quy tắc cho người chưa thành niên. "
+    "Theo Điều 5, Điều 22 và Điều 134 Luật Xử lý vi phạm hành chính: "
+    "Người dưới 14 tuổi không bị xử phạt vi phạm hành chính; "
+    "người từ đủ 14 tuổi đến dưới 16 tuổi chỉ bị áp dụng hình thức xử phạt cảnh cáo (không phạt tiền); "
+    "người từ đủ 16 tuổi đến dưới 18 tuổi mức phạt tiền không quá 1/2 mức phạt áp dụng đối với người thành niên."
+)
+
+
+def _leading_article_int(article_number: int | str) -> int | None:
+    """Phần số nguyên đứng đầu của số Điều ("93a" -> 93, "114a" -> 114, "abc" -> None)."""
+    match_num = re.match(r"^(\d+)", str(article_number).strip())
+    return int(match_num.group(1)) if match_num else None
+
+
+def _unsupported_penalty_result() -> dict:
+    return {"results": [], "steps": [], "rule_supported": False}
+
+
+def _resolve_base_subject(
+    config: dict, article_number: int | str, art_int: int, base_min, base_max
+) -> tuple[str, RuleStep]:
+    """Chủ thể gốc của khung phạt: theo Điều 4 khoản 3 mặc định là TỔ CHỨC, trừ các Điều ngoại lệ."""
+    exceptions = config["individual_base_articles"]
+    if article_number in exceptions or art_int in exceptions:
+        return INDIVIDUAL, RuleStep(
+            "BASE_SUBJECT", config["basis"],
+            f"Điều {article_number} là ngoại lệ của Điều 4 khoản 3: khung "
+            f"{format_vnd(base_min)} - {format_vnd(base_max)} áp dụng trực tiếp cho cá nhân.",
+        )
+    return config["base_subject"], RuleStep(
+        "BASE_SUBJECT", config["basis"],
+        f"Khung {format_vnd(base_min)} - {format_vnd(base_max)} tại Điều {article_number} "
+        "là mức phạt áp dụng đối với TỔ CHỨC.",
+    )
+
+
+def _evaluate_individual(
+    config: dict,
+    article_number: int | str,
+    base_subject: str,
+    base_min,
+    base_max,
+    facts: QueryFacts,
+    steps: list[RuleStep],
+) -> tuple[bool, float | None, float, str]:
+    """Quy tắc cho CÁ NHÂN: độ tuổi (Luật XLVPHC) -> quy đổi 1/2 -> trần lĩnh vực -> trần 16-18 tuổi.
+
+    Trả về (applicable, amount_min, amount_max, formula); dấu vết suy luận được ghi vào `steps`.
+    """
+    age = facts.age
+
+    # Các trường hợp không phạt tiền: khoảng tuổi mơ hồ, dưới 14 tuổi, từ đủ 14 đến dưới 16 tuổi.
+    if facts.age_band in _AGE_BANDS_NEEDING_EXACT_AGE:
+        steps.append(RuleStep("AGE_RANGE_NEEDS_EXACT_AGE", AGE_RULE_BASIS, _AGE_RANGE_NEEDS_EXACT_AGE_DETAIL, True))
+        return False, base_min, base_max, "Cần biết tuổi chính xác để xác định hình thức và mức xử lý"
+    if age is not None and age < 14:
+        steps.append(RuleStep("AGE_UNDER_14", AGE_RULE_BASIS,
+                              f"Người {age} tuổi chưa đủ tuổi chịu xử phạt VPHC.", True))
+        return False, base_min, base_max, "Dưới 14 tuổi: không bị xử phạt vi phạm hành chính"
+    if age is not None and age < 16:
+        steps.append(RuleStep("AGE_14_16", AGE_RULE_BASIS,
+                              f"Người {age} tuổi chỉ bị xử phạt khi vi phạm do cố ý và "
+                              "áp dụng hình thức cảnh cáo, không phạt tiền.", True))
+        return False, base_min, base_max, "Từ đủ 14 đến dưới 16 tuổi: phạt cảnh cáo, không phạt tiền"
+
+    amount_min, amount_max, formula = base_min, base_max, "giữ nguyên khung gốc"
+
+    if base_subject == ORGANIZATION:
+        ratio = config["individual_ratio"]
+        amount_min, amount_max = base_min * ratio, base_max * ratio
+        formula = "Cá nhân = 1/2 × mức phạt Tổ chức"
+        steps.append(RuleStep(
+            "INDIVIDUAL_HALF", config["basis"],
+            f"Cá nhân vi phạm như tổ chức -> {format_vnd(base_min)} × 1/2 = "
+            f"{format_vnd(amount_min)}; {format_vnd(base_max)} × 1/2 = {format_vnd(amount_max)}.",
+        ))
+
+    cap, field_name = _individual_cap(config, article_number)
+    if cap is not None:
+        ok = amount_max <= cap
+        steps.append(RuleStep(
+            "CAP_CHECK", config["cap_basis"],
+            f"Kiểm tra trần lĩnh vực {field_name}: {format_vnd(amount_max)} "
+            f"{'≤' if ok else '>'} {format_vnd(cap)} -> {'hợp lệ' if ok else 'VƯỢT TRẦN, giới hạn lại'}.",
+        ))
+        if not ok:
+            amount_max = cap
+            amount_min = min(amount_min, cap)
+
+    # Từ đủ 16 đến dưới 18 tuổi: chỉ xác định được mức trần (1/2 mức tối đa của người thành niên).
+    if age is not None and age < 18:
+        amount_min, amount_max = None, amount_max / 2
+        formula = "Người từ đủ 16 đến dưới 18 tuổi: mức phạt không quá 1/2 mức tối đa của người thành niên"
+        steps.append(RuleStep("AGE_16_18", AGE_RULE_BASIS,
+                              f"Người {age} tuổi: mức phạt tiền không quá 1/2 mức tối đa của người thành niên, tức không quá {format_vnd(amount_max)}. Mức cụ thể chưa được xác định.", True))
+
+    return True, amount_min, amount_max, formula
+
+
+def _penalty_display(applicable: bool, amount_min, amount_max, formula: str) -> str:
+    if not applicable:
+        return formula
+    if amount_min is None:
+        return f"Không quá {format_vnd(amount_max)}; mức cụ thể chưa được xác định"
+    return f"{format_vnd(amount_min)} - {format_vnd(amount_max)}"
+
+
 def apply_penalty_rules(
     penalty: dict, doc_code: str, article_number: int | str, facts: QueryFacts
 ) -> dict:
     """Tính mức phạt áp dụng cho từng chủ thể trong câu hỏi + dấu vết suy luận."""
     base_min, base_max = penalty.get("min_amount"), penalty.get("max_amount")
-    steps: list[RuleStep] = []
-    results: list[dict] = []
+    art_int = _leading_article_int(article_number)
 
-    match_num = re.match(r"^(\d+)", str(article_number).strip())
-    art_int = int(match_num.group(1)) if match_num else None
-
-    if (
-        penalty.get("type") != "FINE"
-        or base_min is None
-        or base_max is None
-        or art_int is None
-    ):
-        return {"results": results, "steps": [asdict(s) for s in steps], "rule_supported": False}
+    if penalty.get("type") != "FINE" or base_min is None or base_max is None or art_int is None:
+        return _unsupported_penalty_result()
 
     config = DECREE_RULES.get(doc_code)
-    low, high = config["scope"] if config else (0, -1)
-    in_scope = config is not None and low <= art_int <= high
-
-    if not in_scope:
+    if config is None or not (config["scope"][0] <= art_int <= config["scope"][1]):
         # Do not apply Nghị định 15/2020's subject/age rules to unrelated instruments.
-        return {
-            "results": results,
-            "steps": [asdict(s) for s in steps],
-            "rule_supported": False,
-        }
+        return _unsupported_penalty_result()
 
-    if in_scope and (article_number in config["individual_base_articles"] or art_int in config["individual_base_articles"]):
-        base_subject = INDIVIDUAL
-        steps.append(RuleStep(
-            "BASE_SUBJECT", config["basis"],
-            f"Điều {article_number} là ngoại lệ của Điều 4 khoản 3: khung "
-            f"{format_vnd(base_min)} - {format_vnd(base_max)} áp dụng trực tiếp cho cá nhân.",
-        ))
-    elif in_scope:
-        base_subject = config["base_subject"]
-        steps.append(RuleStep(
-            "BASE_SUBJECT", config["basis"],
-            f"Khung {format_vnd(base_min)} - {format_vnd(base_max)} tại Điều {article_number} "
-            "là mức phạt áp dụng đối với TỔ CHỨC.",
-        ))
-    else:
-        base_subject = penalty.get("base_subject") or None
-        steps.append(RuleStep(
-            "BASE_SUBJECT", f"Văn bản {doc_code}",
-            "Không có quy tắc quy đổi chủ thể cho văn bản này; giữ nguyên khung phạt gốc.",
-        ))
+    base_subject, base_step = _resolve_base_subject(config, article_number, art_int, base_min, base_max)
+    steps: list[RuleStep] = [base_step]
+    results: list[dict] = []
 
     for subject in facts.subjects:
-        amount_min, amount_max, formula = base_min, base_max, "giữ nguyên khung gốc"
-        applicable = True
+        applicable, amount_min, amount_max, formula = True, base_min, base_max, "giữ nguyên khung gốc"
 
-        if in_scope and subject == INDIVIDUAL:
-            if facts.age_band in {
-                "UNDER_16_UNSPECIFIED",
-                "UNDER_18_UNSPECIFIED",
-            }:
-                applicable = False
-                formula = "Cần biết tuổi chính xác để xác định hình thức và mức xử lý"
-                steps.append(RuleStep(
-                    "AGE_RANGE_NEEDS_EXACT_AGE", AGE_RULE_BASIS,
-                    "Khoảng tuổi được nêu đi qua mốc 14 hoặc 16 tuổi; cần tuổi chính xác trước khi áp dụng quy tắc cho người chưa thành niên. "
-                    "Theo Điều 5, Điều 22 và Điều 134 Luật Xử lý vi phạm hành chính: "
-                    "Người dưới 14 tuổi không bị xử phạt vi phạm hành chính; "
-                    "người từ đủ 14 tuổi đến dưới 16 tuổi chỉ bị áp dụng hình thức xử phạt cảnh cáo (không phạt tiền); "
-                    "người từ đủ 16 tuổi đến dưới 18 tuổi mức phạt tiền không quá 1/2 mức phạt áp dụng đối với người thành niên.",
-                    True,
-                ))
-            elif facts.age is not None and facts.age < 14:
-                applicable = False
-                formula = "Dưới 14 tuổi: không bị xử phạt vi phạm hành chính"
-                steps.append(RuleStep("AGE_UNDER_14", AGE_RULE_BASIS,
-                                      f"Người {facts.age} tuổi chưa đủ tuổi chịu xử phạt VPHC.", True))
-            elif facts.age is not None and facts.age < 16:
-                applicable = False
-                formula = "Từ đủ 14 đến dưới 16 tuổi: phạt cảnh cáo, không phạt tiền"
-                steps.append(RuleStep("AGE_14_16", AGE_RULE_BASIS,
-                                      f"Người {facts.age} tuổi chỉ bị xử phạt khi vi phạm do cố ý và "
-                                      "áp dụng hình thức cảnh cáo, không phạt tiền.", True))
-            else:
-                if base_subject == ORGANIZATION:
-                    ratio = config["individual_ratio"]
-                    amount_min, amount_max = base_min * ratio, base_max * ratio
-                    formula = "Cá nhân = 1/2 × mức phạt Tổ chức"
-                    steps.append(RuleStep(
-                        "INDIVIDUAL_HALF", config["basis"],
-                        f"Cá nhân vi phạm như tổ chức -> {format_vnd(base_min)} × 1/2 = "
-                        f"{format_vnd(amount_min)}; {format_vnd(base_max)} × 1/2 = {format_vnd(amount_max)}.",
-                    ))
-
-                cap, field_name = _individual_cap(config, article_number)
-                if cap is not None:
-                    ok = amount_max <= cap
-                    steps.append(RuleStep(
-                        "CAP_CHECK", config["cap_basis"],
-                        f"Kiểm tra trần lĩnh vực {field_name}: {format_vnd(amount_max)} "
-                        f"{'≤' if ok else '>'} {format_vnd(cap)} -> {'hợp lệ' if ok else 'VƯỢT TRẦN, giới hạn lại'}.",
-                    ))
-                    if not ok:
-                        amount_max = cap
-                        amount_min = min(amount_min, cap)
-
-                if facts.age is not None and facts.age < 18:
-                    amount_min, amount_max = None, amount_max / 2
-                    formula = "Người từ đủ 16 đến dưới 18 tuổi: mức phạt không quá 1/2 mức tối đa của người thành niên"
-                    steps.append(RuleStep("AGE_16_18", AGE_RULE_BASIS,
-                                          f"Người {facts.age} tuổi: mức phạt tiền không quá 1/2 mức tối đa của người thành niên, tức không quá {format_vnd(amount_max)}. Mức cụ thể chưa được xác định.", True))
-        elif in_scope and base_subject == INDIVIDUAL and subject == ORGANIZATION:
-            applicable = False
-            formula = "Không áp dụng cho tổ chức"
+        if subject == INDIVIDUAL:
+            applicable, amount_min, amount_max, formula = _evaluate_individual(
+                config, article_number, base_subject, base_min, base_max, facts, steps
+            )
+        elif subject == ORGANIZATION and base_subject == INDIVIDUAL:
+            applicable, formula = False, "Không áp dụng cho tổ chức"
             steps.append(RuleStep(
                 "NOT_APPLICABLE", config["basis"],
                 f"Điều {article_number} chỉ điều chỉnh hành vi của cá nhân (người chơi).",
@@ -487,13 +512,7 @@ def apply_penalty_rules(
             "applicable": applicable,
             "min_amount": int(round(amount_min)) if applicable and amount_min is not None else None,
             "max_amount": int(round(amount_max)) if applicable else None,
-            "display": (
-                f"{format_vnd(amount_min)} - {format_vnd(amount_max)}"
-                if applicable and amount_min is not None
-                else f"Không quá {format_vnd(amount_max)}; mức cụ thể chưa được xác định"
-                if applicable
-                else formula
-            ),
+            "display": _penalty_display(applicable, amount_min, amount_max, formula),
             "formula": formula,
         })
 
@@ -532,131 +551,136 @@ class ProvenanceRef:
 # ---------------------------------------------------------------------------
 # Suy luận Đa chặng 3 Tầng (Multi-Hop Legal Graph: Quy phạm -> Hành chính -> Hình sự)
 # ---------------------------------------------------------------------------
+_BLHS_CODE = "100/2015/QH13"
+_BLHS_SOURCE = "Bộ luật Hình sự số 100/2015/QH13 (sửa đổi, bổ sung 2017)"
+# Số Điều rỗng/không xác định khi hỏi chung về BLHS -> cho phép khớp theo từ khóa hành vi.
+_UNSPECIFIED_ARTICLE_TOKENS = {"", "0", "none"}
+
+# Các nhóm văn bản luật nền dùng chung giữa nhiều tội danh.
+_CYBERATTACK_LAW_ARTICLES = {
+    "24/2018/QH14": {"7", "8", "18", "19"},
+    "116/2025/QH15": {"7", "8", "18", "19"},
+    "86/2015/QH13": {"7", "8", "18", "19"},
+}
+_MALWARE_LAW_ARTICLES = {
+    "86/2015/QH13": {"7", "8"},
+    "24/2018/QH14": {"7", "8"},
+    "116/2025/QH15": {"7", "8"},
+}
+
+
+@dataclass(frozen=True)
+class _CriminalEscalationRule:
+    """Một tội danh BLHS + các Điều (hành chính / luật chuyên ngành) có thể dẫn chiếu tới nó."""
+    article: int
+    source_articles: dict[str, set[str]]  # doc_code -> các số Điều (dạng chuỗi chữ thường)
+    keywords: tuple[str, ...]
+    title: str
+    condition: str
+    penalty: str
+
+    def is_candidate(self, doc_code: str, art_str: str) -> bool:
+        if doc_code == _BLHS_CODE:
+            return art_str == str(self.article) or art_str in _UNSPECIFIED_ARTICLE_TOKENS
+        return art_str in self.source_articles.get(doc_code, ())
+
+    def matches(self, doc_code: str, art_str: str, norm_act: str) -> bool:
+        if doc_code == _BLHS_CODE and art_str == str(self.article):
+            return True
+        return any(kw in norm_act for kw in self.keywords)
+
+    def to_dict(self) -> dict:
+        return {
+            "code": _BLHS_CODE,
+            "article": self.article,
+            "title": self.title,
+            "condition": self.condition,
+            "penalty": self.penalty,
+            "source": _BLHS_SOURCE,
+            "status": VerificationStatus.VERIFIED,
+        }
+
+
+# Thứ tự ưu tiên đánh giá (trả về tội danh khớp đầu tiên) - giữ nguyên như quy tắc gốc.
+CRIMINAL_ESCALATION_RULES: tuple[_CriminalEscalationRule, ...] = (
+    # Nhóm 1: Tán phát thông tin sai sự thật / vu khống / xúc phạm / thông tin giả / chủ quyền
+    # (Điều 99, 101 NĐ 15/2020; Điều 93, 95 NĐ 174/2026; Điều 7, 8, 18 Luật ANM; Điều 7 Luật AI; Điều 288 BLHS)
+    _CriminalEscalationRule(
+        article=288,
+        source_articles={
+            "15/2020/NĐ-CP": {"99", "101"},
+            "174/2026/NĐ-CP": {"93", "95"},
+            "24/2018/QH14": {"7", "8", "18"},
+            "116/2025/QH15": {"7", "8", "18"},
+            "134/2025/QH15": {"7"},
+        },
+        keywords=("sai sự thật", "bịa đặt", "vu khống", "xúc phạm", "thông tin giả", "xuyên tạc", "chủ quyền", "bản đồ", "đưa thông tin trái phép", "deepfake", "giả mạo"),
+        title="Điều 288 BLHS 2015 (sửa đổi 2017): Tội đưa hoặc sử dụng trái phép thông tin mạng máy tính, mạng viễn thông",
+        condition="Thu lợi bất chính từ 50.000.000 đồng trở lên, gây thiệt hại từ 100.000.000 đồng trở lên hoặc gây dư luận xấu làm giảm uy tín của cơ quan, tổ chức, cá nhân",
+        penalty="Phạt tiền từ 30.000.000 đến 1.000.000.000 đồng hoặc phạt tù từ 06 tháng đến 07 năm",
+    ),
+    # Nhóm 2: Xâm nhập, bẻ khóa, chiếm quyền điều khiển hệ thống mạng
+    # (Điều 80, 81 NĐ 15/2020; Điều 89, 90 NĐ 174/2026; Điều 7, 8, 18, 19 Luật ANM / Luật ATTTM; Điều 289 BLHS)
+    _CriminalEscalationRule(
+        article=289,
+        source_articles={"15/2020/NĐ-CP": {"80", "81"}, "174/2026/NĐ-CP": {"89", "90"}, **_CYBERATTACK_LAW_ARTICLES},
+        keywords=("bẻ khóa", "truy cập trái phép", "xâm nhập", "chiếm quyền", "vượt qua mã truy cập", "can thiệp dữ liệu"),
+        title="Điều 289 BLHS 2015 (sửa đổi 2017): Tội xâm nhập trái phép vào mạng máy tính, mạng viễn thông hoặc phương tiện điện tử của người khác",
+        condition="Cố ý vượt qua cảnh báo, mã truy cập, tường lửa để chiếm quyền điều khiển hoặc can thiệp dữ liệu",
+        penalty="Phạt tiền từ 50.000.000 đến 300.000.000 đồng hoặc phạt tù từ 01 năm đến 12 năm",
+    ),
+    # Nhóm 3: Sản xuất, mua bán, trao đổi công cụ, phần mềm độc hại
+    # (Điều 77 NĐ 15/2020; Điều 86 NĐ 174/2026; Điều 7, 8 Luật ATTTM / Luật ANM 2018; Điều 285 BLHS)
+    _CriminalEscalationRule(
+        article=285,
+        source_articles={"15/2020/NĐ-CP": {"77"}, "174/2026/NĐ-CP": {"86"}, **_MALWARE_LAW_ARTICLES},
+        keywords=("sản xuất công cụ", "mua bán công cụ", "phần mềm độc hại", "thiết bị bẻ khóa", "công cụ tấn công", "chế tạo mã độc", "phần mềm tấn công", "sản xuất, phát tán hoặc mua bán", "công cụ, thiết bị, phần mềm"),
+        title="Điều 285 BLHS 2015 (sửa đổi 2017): Tội sản xuất, mua bán, trao đổi hoặc tặng cho công cụ, thiết bị, phần mềm để sử dụng vào mục đích trái pháp luật",
+        condition="Thu lợi bất chính từ 30.000.000 đồng trở lên hoặc gây thiệt hại từ 50.000.000 đồng trở lên",
+        penalty="Phạt tiền từ 20.000.000 đến 500.000.000 đồng hoặc phạt tù từ 01 năm đến 07 năm",
+    ),
+    # Nhóm 4: Phát tán chương trình tin học gây hại (virus, trojan, ransomware)
+    # (Điều 78 NĐ 15/2020; Điều 87 NĐ 174/2026; Điều 7, 8 Luật ATTTM / Luật ANM 2018; Điều 286 BLHS)
+    _CriminalEscalationRule(
+        article=286,
+        source_articles={"15/2020/NĐ-CP": {"78"}, "174/2026/NĐ-CP": {"87"}, **_MALWARE_LAW_ARTICLES},
+        keywords=("phát tán virus", "phát tán mã độc", "lây lan mã độc", "ransomware", "mã hóa tống tiền", "chương trình gây hại", "mã độc", "tê liệt hệ thống", "chương trình tin học"),
+        title="Điều 286 BLHS 2015 (sửa đổi 2017): Tội phát tán chương trình tin học gây hại cho hoạt động của mạng máy tính, mạng viễn thông, phương tiện điện tử",
+        condition="Thu lợi bất chính từ 50.000.000 đồng trở lên hoặc làm đình trệ hoạt động mạng từ 30 phút trở lên hoặc gây thiệt hại từ 100.000.000 đồng trở lên",
+        penalty="Phạt tiền từ 50.000.000 đến 1.000.000.000 đồng hoặc phạt tù từ 01 năm đến 12 năm",
+    ),
+    # Nhóm 5: Cản trở, gây rối loạn hoạt động mạng, tấn công từ chối dịch vụ (DDoS)
+    # (Điều 79 NĐ 15/2020; Điều 88 NĐ 174/2026; Điều 7, 8, 18, 19 Luật ANM / Luật ATTTM; Điều 287 BLHS)
+    _CriminalEscalationRule(
+        article=287,
+        source_articles={"15/2020/NĐ-CP": {"79"}, "174/2026/NĐ-CP": {"88"}, **_CYBERATTACK_LAW_ARTICLES},
+        keywords=("ddos", "từ chối dịch vụ", "gây nghẽn mạng", "làm tê liệt", "phá hoại mạng", "rối loạn hoạt động", "cản trở", "rối loạn", "tê liệt"),
+        title="Điều 287 BLHS 2015 (sửa đổi 2017): Tội cản trở hoặc gây rối loạn hoạt động của mạng máy tính, mạng viễn thông, phương tiện điện tử",
+        condition="Thu lợi bất chính từ 50.000.000 đồng trở lên hoặc gây thiệt hại từ 100.000.000 đồng trở lên hoặc làm tê liệt hệ thống thông tin",
+        penalty="Phạt tiền từ 30.000.000 đến 1.000.000.000 đồng hoặc phạt tù từ 06 tháng đến 12 năm",
+    ),
+    # Nhóm 6: Lừa đảo, chiếm đoạt tài sản qua mạng viễn thông / mạng máy tính
+    # (Điều 82 NĐ 15/2020; Điều 91 NĐ 174/2026; Điều 7, 8, 18, 19 Luật ANM / Luật ATTTM; Điều 290 BLHS)
+    _CriminalEscalationRule(
+        article=290,
+        source_articles={"15/2020/NĐ-CP": {"82"}, "174/2026/NĐ-CP": {"91"}, **_CYBERATTACK_LAW_ARTICLES},
+        keywords=("lừa đảo qua mạng", "chiếm đoạt tài sản", "trộm cắp tài khoản", "hack tài khoản", "lừa đảo viễn thông", "chiếm đoạt", "giả mạo ngân hàng", "tài khoản", "lừa đảo"),
+        title="Điều 290 BLHS 2015 (sửa đổi 2017): Tội sử dụng mạng máy tính, mạng viễn thông, phương tiện điện tử thực hiện hành vi chiếm đoạt tài sản",
+        condition="Chiếm đoạt tài sản trị giá từ 2.000.000 đồng trở lên (hoặc dưới 2.000.000 đồng nhưng đã bị xử phạt VPHC hoặc kết án chưa xóa án tích)",
+        penalty="Phạt cải tạo không giam giữ đến 03 năm hoặc phạt tù từ 06 tháng đến 20 năm",
+    ),
+)
+
+
 def infer_criminal_escalation(doc_code: str, article_number: int | str, action_name: str = "") -> list[dict]:
     """Suy luận chuyển hóa hình sự có kiểm chứng nguồn và ngưỡng cấu thành (Multi-Hop 3-Tier Legal Graph)."""
-    norm_act = (action_name or "").lower()
-    art_str = str(article_number).lower().strip()
-    is_blhs = doc_code == "100/2015/QH13"
+    norm_doc = unicodedata.normalize("NFC", str(doc_code or "")).strip().upper().replace("ND-CP", "NĐ-CP")
+    norm_act = unicodedata.normalize("NFC", str(action_name or "")).lower().strip()
+    art_str = unicodedata.normalize("NFC", str(article_number if article_number is not None else "")).lower().strip()
+    art_str = re.sub(r"^điều\s+", "", art_str).strip()
 
-    # Nhóm 1: Tán phát thông tin sai sự thật / vu khống / xúc phạm / thông tin giả / chủ quyền (Điều 99, 101 NĐ 15/2020; Điều 93, 95 NĐ 174/2026; Điều 7, 8 Luật ANM; Điều 7 Luật AI; Điều 288 BLHS)
-    is_fake_news_decree = (doc_code == "15/2020/NĐ-CP" and art_str in {"99", "101"}) or (
-        doc_code == "174/2026/NĐ-CP" and art_str in {"93", "95"}
-    )
-    is_fake_news_law = (
-        (doc_code in {"24/2018/QH14", "116/2025/QH15"} and art_str in {"7", "8", "18"})
-        or (doc_code == "134/2025/QH15" and art_str == "7")
-    )
-    is_blhs_288 = is_blhs and (art_str == "288" or art_str in {"", "0", "none"})
-
-    kw_288 = ["sai sự thật", "bịa đặt", "vu khống", "xúc phạm", "thông tin giả", "xuyên tạc", "chủ quyền", "bản đồ", "đưa thông tin trái phép", "deepfake", "giả mạo"]
-    if is_fake_news_decree or is_fake_news_law or is_blhs_288:
-        if (is_blhs and art_str == "288") or any(kw in norm_act for kw in kw_288):
-            return [{
-                "code": "100/2015/QH13",
-                "article": 288,
-                "title": "Điều 288 BLHS 2015 (sửa đổi 2017): Tội đưa hoặc sử dụng trái phép thông tin mạng máy tính, mạng viễn thông",
-                "condition": "Thu lợi bất chính từ 50.000.000 đồng trở lên, gây thiệt hại từ 100.000.000 đồng trở lên hoặc gây dư luận xấu làm giảm uy tín của cơ quan, tổ chức, cá nhân",
-                "penalty": "Phạt tiền từ 30.000.000 đến 1.000.000.000 đồng hoặc phạt tù từ 06 tháng đến 07 năm",
-                "source": "Bộ luật Hình sự số 100/2015/QH13 (sửa đổi, bổ sung 2017)",
-                "status": VerificationStatus.VERIFIED,
-            }]
-
-    # Nhóm 2: Xâm nhập, bẻ khóa, chiếm quyền điều khiển hệ thống mạng (Điều 80, 81 NĐ 15/2020; Điều 89, 90 NĐ 174/2026; Điều 8, 18 Luật ANM; Điều 7 Luật ATTTM; Điều 289 BLHS)
-    is_cyberattack_decree = (doc_code == "15/2020/NĐ-CP" and art_str in {"80", "81"}) or (
-        doc_code == "174/2026/NĐ-CP" and art_str in {"89", "90"}
-    )
-    is_cyberattack_law = (doc_code in {"24/2018/QH14", "116/2025/QH15", "86/2015/QH13"}) and art_str in {"7", "8", "18", "19"}
-    is_blhs_289 = is_blhs and (art_str == "289" or art_str in {"", "0", "none"})
-
-    kw_289 = ["bẻ khóa", "truy cập trái phép", "xâm nhập", "chiếm quyền", "vượt qua mã truy cập", "can thiệp dữ liệu"]
-    if is_cyberattack_decree or is_cyberattack_law or is_blhs_289:
-        if (is_blhs and art_str == "289") or any(kw in norm_act for kw in kw_289):
-            return [{
-                "code": "100/2015/QH13",
-                "article": 289,
-                "title": "Điều 289 BLHS 2015 (sửa đổi 2017): Tội xâm nhập trái phép vào mạng máy tính, mạng viễn thông hoặc phương tiện điện tử của người khác",
-                "condition": "Cố ý vượt qua cảnh báo, mã truy cập, tường lửa để chiếm quyền điều khiển hoặc can thiệp dữ liệu",
-                "penalty": "Phạt tiền từ 50.000.000 đến 300.000.000 đồng hoặc phạt tù từ 01 năm đến 12 năm",
-                "source": "Bộ luật Hình sự số 100/2015/QH13 (sửa đổi, bổ sung 2017)",
-                "status": VerificationStatus.VERIFIED,
-            }]
-
-    # Nhóm 3: Sản xuất, mua bán, trao đổi công cụ, phần mềm độc hại (Điều 77 NĐ 15/2020; Điều 86 NĐ 174/2026; Điều 7 Luật ATTTM; Điều 285 BLHS)
-    is_malware_tool_decree = (doc_code == "15/2020/NĐ-CP" and art_str == "77") or (
-        doc_code == "174/2026/NĐ-CP" and art_str == "86"
-    )
-    is_malware_tool_law = (doc_code in {"86/2015/QH13", "24/2018/QH14"}) and art_str in {"7", "8"}
-    is_blhs_285 = is_blhs and (art_str == "285" or art_str in {"", "0", "none"})
-
-    kw_285 = ["sản xuất công cụ", "mua bán công cụ", "phần mềm độc hại", "thiết bị bẻ khóa", "công cụ tấn công", "chế tạo mã độc", "phần mềm tấn công", "sản xuất, phát tán hoặc mua bán", "công cụ, thiết bị, phần mềm"]
-    if is_malware_tool_decree or is_malware_tool_law or is_blhs_285:
-        if (is_blhs and art_str == "285") or any(kw in norm_act for kw in kw_285):
-            return [{
-                "code": "100/2015/QH13",
-                "article": 285,
-                "title": "Điều 285 BLHS 2015 (sửa đổi 2017): Tội sản xuất, mua bán, trao đổi hoặc tặng cho công cụ, thiết bị, phần mềm để sử dụng vào mục đích trái pháp luật",
-                "condition": "Thu lợi bất chính từ 30.000.000 đồng trở lên hoặc gây thiệt hại từ 50.000.000 đồng trở lên",
-                "penalty": "Phạt tiền từ 20.000.000 đến 500.000.000 đồng hoặc phạt tù từ 01 năm đến 07 năm",
-                "source": "Bộ luật Hình sự số 100/2015/QH13 (sửa đổi, bổ sung 2017)",
-                "status": VerificationStatus.VERIFIED,
-            }]
-
-    # Nhóm 4: Phát tán chương trình tin học gây hại (virus, trojan, ransomware) (Điều 78 NĐ 15/2020; Điều 87 NĐ 174/2026; Điều 7 Luật ATTTM; Điều 286 BLHS)
-    is_malware_spread_decree = (doc_code == "15/2020/NĐ-CP" and art_str == "78") or (
-        doc_code == "174/2026/NĐ-CP" and art_str == "87"
-    )
-    is_blhs_286 = is_blhs and (art_str == "286" or art_str in {"", "0", "none"})
-
-    kw_286 = ["phát tán virus", "phát tán mã độc", "lây lan mã độc", "ransomware", "mã hóa tống tiền", "chương trình gây hại", "mã độc", "tê liệt hệ thống", "chương trình tin học"]
-    if is_malware_spread_decree or is_malware_tool_law or is_blhs_286:
-        if (is_blhs and art_str == "286") or any(kw in norm_act for kw in kw_286):
-            return [{
-                "code": "100/2015/QH13",
-                "article": 286,
-                "title": "Điều 286 BLHS 2015 (sửa đổi 2017): Tội phát tán chương trình tin học gây hại cho hoạt động của mạng máy tính, mạng viễn thông, phương tiện điện tử",
-                "condition": "Thu lợi bất chính từ 50.000.000 đồng trở lên hoặc làm đình trệ hoạt động mạng từ 30 phút trở lên hoặc gây thiệt hại từ 100.000.000 đồng trở lên",
-                "penalty": "Phạt tiền từ 50.000.000 đến 1.000.000.000 đồng hoặc phạt tù từ 01 năm đến 12 năm",
-                "source": "Bộ luật Hình sự số 100/2015/QH13 (sửa đổi, bổ sung 2017)",
-                "status": VerificationStatus.VERIFIED,
-            }]
-
-    # Nhóm 5: Cản trở, gây rối loạn hoạt động mạng, tấn công từ chối dịch vụ (DDoS) (Điều 79 NĐ 15/2020; Điều 88 NĐ 174/2026; Điều 8 Luật ANM; Điều 287 BLHS)
-    is_ddos_decree = (doc_code == "15/2020/NĐ-CP" and art_str == "79") or (
-        doc_code == "174/2026/NĐ-CP" and art_str == "88"
-    )
-    is_blhs_287 = is_blhs and (art_str == "287" or art_str in {"", "0", "none"})
-
-    kw_287 = ["ddos", "từ chối dịch vụ", "gây nghẽn mạng", "làm tê liệt", "phá hoại mạng", "rối loạn hoạt động", "cản trở", "rối loạn", "tê liệt"]
-    if is_ddos_decree or is_cyberattack_law or is_blhs_287:
-        if (is_blhs and art_str == "287") or any(kw in norm_act for kw in kw_287):
-            return [{
-                "code": "100/2015/QH13",
-                "article": 287,
-                "title": "Điều 287 BLHS 2015 (sửa đổi 2017): Tội cản trở hoặc gây rối loạn hoạt động của mạng máy tính, mạng viễn thông, phương tiện điện tử",
-                "condition": "Thu lợi bất chính từ 50.000.000 đồng trở lên hoặc gây thiệt hại từ 100.000.000 đồng trở lên hoặc làm tê liệt hệ thống thông tin",
-                "penalty": "Phạt tiền từ 30.000.000 đến 1.000.000.000 đồng hoặc phạt tù từ 06 tháng đến 12 năm",
-                "source": "Bộ luật Hình sự số 100/2015/QH13 (sửa đổi, bổ sung 2017)",
-                "status": VerificationStatus.VERIFIED,
-            }]
-
-    # Nhóm 6: Lừa đảo, chiếm đoạt tài sản qua mạng viễn thông / mạng máy tính (Điều 82 NĐ 15/2020; Điều 91 NĐ 174/2026; Điều 8, 18 Luật ANM; Điều 290 BLHS)
-    is_fraud_decree = (doc_code == "15/2020/NĐ-CP" and art_str == "82") or (
-        doc_code == "174/2026/NĐ-CP" and art_str == "91"
-    )
-    is_blhs_290 = is_blhs and (art_str == "290" or art_str in {"", "0", "none"})
-
-    kw_290 = ["lừa đảo qua mạng", "chiếm đoạt tài sản", "trộm cắp tài khoản", "hack tài khoản", "lừa đảo viễn thông", "chiếm đoạt", "giả mạo ngân hàng", "tài khoản", "lừa đảo"]
-    if is_fraud_decree or is_cyberattack_law or is_blhs_290:
-        if (is_blhs and art_str == "290") or any(kw in norm_act for kw in kw_290):
-            return [{
-                "code": "100/2015/QH13",
-                "article": 290,
-                "title": "Điều 290 BLHS 2015 (sửa đổi 2017): Tội sử dụng mạng máy tính, mạng viễn thông, phương tiện điện tử thực hiện hành vi chiếm đoạt tài sản",
-                "condition": "Chiếm đoạt tài sản trị giá từ 2.000.000 đồng trở lên (hoặc dưới 2.000.000 đồng nhưng đã bị xử phạt VPHC hoặc kết án chưa xóa án tích)",
-                "penalty": "Phạt cải tạo không giam giữ đến 03 năm hoặc phạt tù từ 06 tháng đến 20 năm",
-                "source": "Bộ luật Hình sự số 100/2015/QH13 (sửa đổi, bổ sung 2017)",
-                "status": VerificationStatus.VERIFIED,
-            }]
-
+    for rule in CRIMINAL_ESCALATION_RULES:
+        if rule.is_candidate(norm_doc, art_str) and rule.matches(norm_doc, art_str, norm_act):
+            return [rule.to_dict()]
     return []
 

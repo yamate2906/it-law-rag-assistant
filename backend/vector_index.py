@@ -39,6 +39,15 @@ def ensure_halfvec_hnsw_index(engine: Engine, collection_name: str) -> int | Non
                     """
                 )
             )
+            conn.execute(
+                text(
+                    """
+                    DROP INDEX IF EXISTS idx_pg_embedding_art_doc;
+                    CREATE INDEX IF NOT EXISTS idx_pg_embedding_art_doc_lower
+                    ON langchain_pg_embedding ((LOWER(cmetadata->>'article_number')), (cmetadata->>'doc_code'));
+                    """
+                )
+            )
             return dimension
     except Exception:
         return None

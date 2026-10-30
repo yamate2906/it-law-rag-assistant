@@ -330,8 +330,10 @@ def _write_skeleton(tx, document: LegalDocument, article: Article) -> dict[str, 
             MATCH (a:Article {id: $id})
             OPTIONAL MATCH (a)<-[:PART_OF]-(k:Clause)
             OPTIONAL MATCH (act:Action)-[:DEFINED_IN]->(k)
+            WITH a, k, act
             WITH a, collect(DISTINCT k) AS clauses, collect(DISTINCT act) AS clause_actions
             OPTIONAL MATCH (direct:Action)-[:DEFINED_IN]->(a)
+            WITH a, clauses, clause_actions, direct
             WITH a, clauses, clause_actions, collect(DISTINCT direct) AS direct_actions
             WITH a, clauses, clause_actions + direct_actions AS actions
             FOREACH (clause IN clauses | DETACH DELETE clause)
@@ -1057,6 +1059,7 @@ def _get_ingested_graph_sources(driver, data_dir: Path) -> set[str]:
         rows = session.run(
             """
             MATCH (d:LegalDoc)<-[:PART_OF]-(a:Article)
+            WITH d, a
             WITH d, collect(DISTINCT a.source) AS art_sources
             RETURN d.code AS code, coalesce(d.sources, []) + art_sources AS sources
             """

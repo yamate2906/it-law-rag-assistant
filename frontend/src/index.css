@@ -11,12 +11,27 @@
 }
 
 html, body, #root {
-  width: 100vw;
-  height: 100vh;
+  width: 100%;
+  height: 100dvh;
   margin: 0;
   padding: 0;
   overflow: hidden;
   font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Accessible keyboard focus indicator (WCAG 2.1 AA) */
+:focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* Custom Scrollbars */

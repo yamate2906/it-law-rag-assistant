@@ -20,3 +20,10 @@ frontend/.env
 .DS_Store
 data/.ocr_cache/
 scratch/
+
+# Agent skills & local assistant rules
+.agents/
+.cursor/
+.cursorrules
+AGENTS.md
+

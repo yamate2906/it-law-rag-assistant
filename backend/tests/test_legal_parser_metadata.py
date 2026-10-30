@@ -1,3 +1,4 @@
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -99,6 +100,35 @@ class LegalParserMetadataTests(unittest.TestCase):
         self.assertEqual(by_number["119a"].effective_to, "2026-06-30")
         self.assertEqual(by_number[124].effective_to, "2026-06-30")
         self.assertIn("211-2025-ndcp.signed.pdf", document.sources)
+
+    def test_main_sql_and_cypher_performance_guards(self):
+        main_src = (BACKEND_DIR / "main.py").read_text(encoding="utf-8")
+        # 1. Functional index idx_pg_embedding_art_doc_lower guard:
+        # Every SQL predicate on cmetadata->>'article_number' must be wrapped in LOWER(...)
+        raw_article_predicates = re.findall(
+            r"(?<!LOWER\()e\.cmetadata->>'article_number'",
+            main_src,
+        )
+        self.assertEqual(
+            raw_article_predicates,
+            [],
+            "Mọi truy vấn SQL theo article_number phải dùng LOWER(e.cmetadata->>'article_number')",
+        )
+        self.assertGreaterEqual(
+            main_src.count("LOWER(e.cmetadata->>'article_number')"),
+            4,
+        )
+        # 2. No correlated SubPlan unnest count in fast_pg_hybrid_search
+        self.assertNotIn("FROM unnest(CAST(:pats AS text[])) AS pattern", main_src)
+        # 3. HNSW ef_search = 100, statement_timeout, and halfvec distance reuse
+        self.assertIn("SET LOCAL hnsw.ef_search = 100", main_src)
+        self.assertIn("SET LOCAL statement_timeout = '3500ms'", main_src)
+        self.assertIn("ORDER BY nearest.dist ASC", main_src)
+        # 4. Neo4j Multi-Hop timeout and memory cap
+        self.assertIn("Neo4jQuery(cypher_text, timeout=timeout_s)", main_src)
+        self.assertIn("left(coalesce(version.text, provision.text, ''), 700)", main_src)
+        # 5. Preserve temporal validity filter is_effective_on()
+        self.assertGreaterEqual(main_src.count("is_effective_on("), 5)
 
 
 if __name__ == "__main__":

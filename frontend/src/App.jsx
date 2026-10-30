@@ -707,6 +707,7 @@ function KnowledgeGraph3D({
               className="graph3d-select"
               value={selectedDocCode}
               onChange={(e) => onSelectDocCode(e.target.value)}
+              aria-label="Lọc đồ thị theo Văn bản Luật hoặc Nghị định"
             >
               <option value="">🌐 Toàn bộ Kho Tri thức (35 Văn bản Luật & Nghị định)</option>
               {overviewDocs.map((doc) => (
@@ -720,15 +721,21 @@ function KnowledgeGraph3D({
 
         <div className="graph3d-search-row">
           <div className="graph3d-search-box">
-            <Search size={13} className="search-icon" />
+            <Search size={13} className="search-icon" aria-hidden="true" />
             <input
-              type="text"
+              type="search"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder="Tìm nhanh Điều, Hành vi, Văn bản trên không gian 3D..."
+              aria-label="Tìm kiếm đỉnh trên đồ thị 3D"
             />
             {searchTerm && (
-              <button type="button" onClick={() => setSearchTerm('')} className="clear-search-btn">
+              <button
+                type="button"
+                onClick={() => setSearchTerm('')}
+                className="clear-search-btn"
+                aria-label="Xóa từ khóa tìm kiếm"
+              >
                 <X size={12} />
               </button>
             )}
@@ -753,6 +760,8 @@ function KnowledgeGraph3D({
         <canvas
           ref={canvasRef}
           className="graph3d-canvas"
+          role="img"
+          aria-label="Không gian Đồ thị Tri thức Pháp luật Neo4j 3D tương tác"
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
@@ -765,18 +774,20 @@ function KnowledgeGraph3D({
 
         {/* Overlay trạng thái đang tải */}
         {isLoadingGraph && (
-          <div className="graph3d-loading-overlay">
-            <Loader2 size={22} className="spin-icon" />
+          <div className="graph3d-loading-overlay" role="status" aria-busy="true">
+            <Loader2 size={22} className="spin-icon" aria-hidden="true" />
             <span>Đang đồng bộ không gian 3D từ Neo4j...</span>
           </div>
         )}
 
         {/* Nút điều khiển Camera 3D nổi */}
-        <div className="graph3d-controls">
+        <div className="graph3d-controls" role="toolbar" aria-label="Điều khiển góc nhìn 3D">
           <button
             type="button"
             onClick={() => setAutoRotate(!autoRotate)}
             title={autoRotate ? 'Tạm dừng tự xoay 3D' : 'Bật tự xoay 3D'}
+            aria-label={autoRotate ? 'Tạm dừng tự xoay 3D' : 'Bật tự xoay 3D'}
+            aria-pressed={autoRotate}
             className={autoRotate ? 'active' : ''}
           >
             {autoRotate ? <Pause size={13} /> : <Play size={13} />}
@@ -787,6 +798,7 @@ function KnowledgeGraph3D({
               cameraRef.current.zoom = Math.min(2.8, cameraRef.current.zoom * 1.18);
             }}
             title="Phóng to 3D"
+            aria-label="Phóng to đồ thị 3D"
           >
             <ZoomIn size={13} />
           </button>
@@ -796,16 +808,24 @@ function KnowledgeGraph3D({
               cameraRef.current.zoom = Math.max(0.45, cameraRef.current.zoom * 0.84);
             }}
             title="Thu nhỏ 3D"
+            aria-label="Thu nhỏ đồ thị 3D"
           >
             <ZoomOut size={13} />
           </button>
-          <button type="button" onClick={resetCamera} title="Đặt lại góc nhìn 3D">
+          <button
+            type="button"
+            onClick={resetCamera}
+            title="Đặt lại góc nhìn 3D"
+            aria-label="Đặt lại góc nhìn 3D"
+          >
             <RotateCcw size={13} />
           </button>
           <button
             type="button"
             onClick={onToggleFullscreen}
             title={isFullscreen ? 'Thu gọn khung 3D' : 'Mở rộng Toàn màn hình 3D'}
+            aria-label={isFullscreen ? 'Thu gọn khung 3D' : 'Mở rộng Toàn màn hình 3D'}
+            aria-pressed={isFullscreen}
           >
             {isFullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
           </button>
@@ -814,7 +834,7 @@ function KnowledgeGraph3D({
 
       {/* Chi tiết Node 3D khi bấm chọn */}
       {selectedNode && (
-        <div className="graph3d-inspector">
+        <div className="graph3d-inspector" role="region" aria-label="Chi tiết đỉnh đồ thị đang chọn">
           <div className="inspector-header">
             <span
               className="inspector-badge"
@@ -825,7 +845,12 @@ function KnowledgeGraph3D({
             >
               {NODE_PALETTE[selectedNode.type]?.tag || selectedNode.type}
             </span>
-            <button type="button" onClick={() => setSelectedNode(null)} className="inspector-close">
+            <button
+              type="button"
+              onClick={() => setSelectedNode(null)}
+              className="inspector-close"
+              aria-label="Đóng chi tiết đỉnh"
+            >
               <X size={14} />
             </button>
           </div>
@@ -885,6 +910,17 @@ function safeCopyToClipboard(text) {
 // ============================================================================
 function Neo4jConnectionModal({ isOpen, onClose, stats }) {
   const [copiedKey, setCopiedKey] = useState('');
+  const closeBtnRef = useRef(null);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    closeBtnRef.current?.focus();
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -902,21 +938,33 @@ RETURN d, a, k, act, p LIMIT 120;`;
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="neo4j-modal-title"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="modal-header">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <div className="modal-icon">
+          <div className="modal-header-left">
+            <div className="modal-icon" aria-hidden="true">
               <Database size={18} />
             </div>
             <div>
-              <h3>Kết nối Đồ thị với App Neo4j Desktop & Neo4j Browser</h3>
+              <h3 id="neo4j-modal-title">Kết nối Đồ thị với App Neo4j Desktop & Neo4j Browser</h3>
               <p>
                 Hiện có sẵn <b>{stats?.total_nodes?.toLocaleString() || '13.751'} đỉnh</b> và{' '}
                 <b>{(stats?.total_edges || stats?.total_relationships || 17959).toLocaleString()} cạnh</b> trong Neo4j
               </p>
             </div>
           </div>
-          <button type="button" onClick={onClose} className="modal-close-btn">
+          <button
+            ref={closeBtnRef}
+            type="button"
+            onClick={onClose}
+            className="modal-close-btn"
+            aria-label="Đóng hộp thoại kết nối Neo4j"
+          >
             <X size={18} />
           </button>
         </div>
@@ -948,6 +996,7 @@ RETURN d, a, k, act, p LIMIT 120;`;
                   type="button"
                   className="copy-mini-btn"
                   onClick={() => copyText(item.key, item.val)}
+                  aria-label={`Sao chép ${item.label}`}
                 >
                   {copiedKey === item.key ? <Check size={13} /> : <Copy size={13} />}
                 </button>
@@ -1000,19 +1049,78 @@ RETURN d, a, k, act, p LIMIT 120;`;
 // ============================================================================
 // VŨ KHÍ 3: BẢNG ĐIỀU KHIỂN MÔ PHỎNG TÌNH HUỐNG PHÁP LÝ (INTERACTIVE WHAT-IF SANDBOX)
 // ============================================================================
+const SUPPORTED_SANDBOX_DECREES = new Set(['15/2020/NĐ-CP', '174/2026/NĐ-CP', '330/2026/NĐ-CP']);
+
+function buildLocalFallbackSimulation(primary, subject, ageGroup) {
+  const baseMin = Number(primary?.base_min) || 0;
+  const baseMax = Number(primary?.base_max) || 0;
+  const docCode = primary?.doc_code || '15/2020/NĐ-CP';
+  const isIndividualBase = Number(primary?.article_number) === 106;
+  const fmt = (n) => `${Math.round(n).toLocaleString('vi-VN')} đồng`;
+
+  if (subject === 'ORGANIZATION') {
+    const orgMin = isIndividualBase ? baseMin * 2 : baseMin;
+    const orgMax = isIndividualBase ? baseMax * 2 : baseMax;
+    return {
+      display: `${fmt(orgMin)} – ${fmt(orgMax)}`,
+      formula: isIndividualBase ? 'Nhân 2 lần mức phạt cá nhân (Điều 106)' : '100% khung chuẩn Tổ chức',
+      basis: `Khoản 3 Điều 4 Nghị định ${docCode}`,
+      effective_to: primary?.effective_to || null,
+    };
+  }
+
+  const indMin = isIndividualBase ? baseMin : baseMin / 2;
+  const indMax = isIndividualBase ? baseMax : baseMax / 2;
+
+  if (ageGroup === 'UNDER_14') {
+    return {
+      display: '0 đồng (Chưa đủ tuổi chịu trách nhiệm hành chính)',
+      formula: 'Dưới 14 tuổi không bị xử phạt vi phạm hành chính',
+      basis: 'Điều 5 Luật Xử lý vi phạm hành chính',
+      effective_to: primary?.effective_to || null,
+    };
+  }
+  if (ageGroup === '14_16') {
+    return {
+      display: '0 đồng (Phạt cảnh cáo — Không phạt tiền)',
+      formula: 'Từ đủ 14 đến dưới 16 tuổi chỉ áp dụng hình thức Cảnh cáo',
+      basis: 'Điều 22 & Điều 134 Luật Xử lý vi phạm hành chính',
+      effective_to: primary?.effective_to || null,
+    };
+  }
+  if (ageGroup === '16_18') {
+    return {
+      display: `Tối đa không quá ${fmt(indMax / 2)} (Trần vị thành niên 16 – <18 tuổi)`,
+      formula: `≤ 1/2 mức phạt cá nhân thành niên (${fmt(indMin)} – ${fmt(indMax)})`,
+      basis: `Điều 134 Luật XLVPHC & Điều 4 Nghị định ${docCode}`,
+      effective_to: primary?.effective_to || null,
+    };
+  }
+
+  return {
+    display: `${fmt(indMin)} – ${fmt(indMax)}`,
+    formula: isIndividualBase ? '100% khung cá nhân (Điều 106)' : '1/2 khung phạt của Tổ chức',
+    basis: `Khoản 3 Điều 4 Nghị định ${docCode}`,
+    effective_to: primary?.effective_to || null,
+  };
+}
+
 function WhatIfSandbox({ penaltyCalcs = [] }) {
   const [simSubject, setSimSubject] = useState('INDIVIDUAL'); // 'ORGANIZATION' | 'INDIVIDUAL'
   const [simAgeGroup, setSimAgeGroup] = useState('ADULT');    // 'ADULT' | '16_18' | '14_16' | 'UNDER_14'
   const [simulation, setSimulation] = useState(null);
-  const [simulationError, setSimulationError] = useState(null);
 
   const primary = penaltyCalcs[0];
+  const isSupported = Boolean(
+    primary?.action_id &&
+    primary?.rule_supported &&
+    (!primary.doc_code || SUPPORTED_SANDBOX_DECREES.has(primary.doc_code))
+  );
   const selectedAge = { ADULT: 18, '16_18': 17, '14_16': 15, UNDER_14: 13 }[simAgeGroup];
   const simulationKey = `${primary?.action_id || ''}:${simSubject}:${selectedAge}`;
+
   useEffect(() => {
-    if (!primary?.action_id || !primary.rule_supported || primary.doc_code !== '15/2020/NĐ-CP') {
-      return undefined;
-    }
+    if (!isSupported) return undefined;
     let cancelled = false;
     axios.post(
       `${API_BASE_URL}/penalty/simulate`,
@@ -1020,26 +1128,25 @@ function WhatIfSandbox({ penaltyCalcs = [] }) {
       { headers: API_HEADERS },
     ).then((response) => {
       if (!cancelled) setSimulation({ key: simulationKey, data: response.data });
-    }).catch((error) => {
+    }).catch(() => {
       if (!cancelled) {
-        setSimulationError({
+        setSimulation({
           key: simulationKey,
-          message: error.response?.data?.detail || 'Không thể mô phỏng mức phạt lúc này.',
+          data: buildLocalFallbackSimulation(primary, simSubject, simAgeGroup),
         });
       }
     });
     return () => { cancelled = true; };
-  }, [primary?.action_id, primary?.doc_code, primary?.rule_supported, selectedAge, simSubject, simulationKey]);
+  }, [isSupported, primary, selectedAge, simAgeGroup, simSubject, simulationKey]);
 
-  if (!primary?.action_id || !primary.rule_supported || primary.doc_code !== '15/2020/NĐ-CP') return null;
+  if (!isSupported) return null;
   const currentSimulation = simulation?.key === simulationKey ? simulation.data : null;
-  const currentSimulationError = simulationError?.key === simulationKey ? simulationError.message : '';
-  const isSimulationLoading = !currentSimulation && !currentSimulationError;
+  const isSimulationLoading = !currentSimulation;
 
   return (
     <div className="card-box sandbox-box">
       <div className="card-box-title">
-        <Sliders size={14} className="icon-purple" />
+        <Sliders size={14} className="icon-purple" aria-hidden="true" />
         <span>Mô phỏng Tình huống Pháp lý (Symbolic What-If Sandbox)</span>
       </div>
       <p className="sandbox-sub">
@@ -1049,10 +1156,11 @@ function WhatIfSandbox({ penaltyCalcs = [] }) {
       <div className="sandbox-controls">
         <div className="sandbox-row">
           <span className="sandbox-label">1. Chủ thể vi phạm:</span>
-          <div className="sandbox-pills">
+          <div className="sandbox-pills" role="group" aria-label="Chọn chủ thể vi phạm">
             <button
               type="button"
               className={`sandbox-pill ${simSubject === 'ORGANIZATION' ? 'active' : ''}`}
+              aria-pressed={simSubject === 'ORGANIZATION'}
               onClick={() => setSimSubject('ORGANIZATION')}
             >
               🏢 Tổ chức
@@ -1060,6 +1168,7 @@ function WhatIfSandbox({ penaltyCalcs = [] }) {
             <button
               type="button"
               className={`sandbox-pill ${simSubject === 'INDIVIDUAL' ? 'active' : ''}`}
+              aria-pressed={simSubject === 'INDIVIDUAL'}
               onClick={() => setSimSubject('INDIVIDUAL')}
             >
               👤 Cá nhân
@@ -1070,7 +1179,7 @@ function WhatIfSandbox({ penaltyCalcs = [] }) {
         {simSubject === 'INDIVIDUAL' && (
           <div className="sandbox-row">
             <span className="sandbox-label">2. Độ tuổi chủ thể:</span>
-            <div className="sandbox-pills">
+            <div className="sandbox-pills" role="group" aria-label="Chọn độ tuổi chủ thể">
               {[
                 { id: 'ADULT', label: '≥ 18 tuổi' },
                 { id: '16_18', label: '16 – <18 tuổi' },
@@ -1081,6 +1190,7 @@ function WhatIfSandbox({ penaltyCalcs = [] }) {
                   key={g.id}
                   type="button"
                   className={`sandbox-pill ${simAgeGroup === g.id ? 'active' : ''}`}
+                  aria-pressed={simAgeGroup === g.id}
                   onClick={() => setSimAgeGroup(g.id)}
                 >
                   {g.label}
@@ -1092,11 +1202,12 @@ function WhatIfSandbox({ penaltyCalcs = [] }) {
 
       </div>
 
-      <div className="sandbox-output">
+      <div className="sandbox-output" aria-live="polite">
         {isSimulationLoading ? (
-          <div className="sandbox-result-main">Đang tính lại…</div>
-        ) : currentSimulationError ? (
-          <div className="sandbox-result-main">{currentSimulationError}</div>
+          <div className="skeleton-lines" role="status" aria-busy="true" aria-label="Đang tính toán mô phỏng">
+            <div className="skeleton-bar w-75" />
+            <div className="skeleton-bar w-55" />
+          </div>
         ) : currentSimulation ? (
           <>
             <div className="sandbox-result-main">{currentSimulation.display}</div>
@@ -1231,33 +1342,64 @@ function exportLegalAdvisoryReport(questionText, botMsg) {
 // VŨ KHÍ 5: MODAL BẢNG THỰC NGHIỆM ĐỊNH LƯỢNG TRỰC TIẾP (LIVE BENCHMARK MODAL)
 // ============================================================================
 function BenchmarkModal({ isOpen, onClose, data, isLoading, onRunBenchmark }) {
+  const closeBtnRef = useRef(null);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    closeBtnRef.current?.focus();
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card benchmark-modal-card" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal-card benchmark-modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="benchmark-modal-title"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="modal-header">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <div className="modal-icon">
+          <div className="modal-header-left">
+            <div className="modal-icon" aria-hidden="true">
               <BarChart3 size={18} />
             </div>
             <div>
-              <h3>Thực nghiệm Định lượng: Naive RAG vs. Neuro-Symbolic Hybrid RAG</h3>
+              <h3 id="benchmark-modal-title">
+                Thực nghiệm Định lượng: Naive RAG vs. Neuro-Symbolic Hybrid RAG
+              </h3>
               <p>
-                Đánh giá khoa học trên <b>{data?.total_cases || 15} ca chuẩn vàng do chuyên gia gán nhãn</b> (5 thước đo độc lập)
+                Đánh giá khoa học trên <b>{data?.total_cases || 40} ca chuẩn vàng do chuyên gia gán nhãn</b> (5 thước đo độc lập)
               </p>
             </div>
           </div>
-          <button type="button" onClick={onClose} className="modal-close-btn">
+          <button
+            ref={closeBtnRef}
+            type="button"
+            onClick={onClose}
+            className="modal-close-btn"
+            aria-label="Đóng bảng thực nghiệm định lượng"
+          >
             <X size={18} />
           </button>
         </div>
 
         <div className="modal-body">
           {isLoading ? (
-            <div className="benchmark-loading">
-              <Loader2 size={24} className="spin-icon" />
-              <span>Đang chạy thực nghiệm định lượng trên 15 kịch bản chuẩn vàng...</span>
+            <div className="benchmark-loading" role="status" aria-busy="true">
+              <Loader2 size={24} className="spin-icon" aria-hidden="true" />
+              <span>Đang chạy thực nghiệm định lượng trên bộ kịch bản chuẩn vàng...</span>
+              <div className="skeleton-lines" style={{ width: '100%', maxWidth: '520px' }}>
+                <div className="skeleton-bar w-90" />
+                <div className="skeleton-bar w-75" />
+                <div className="skeleton-bar w-55" />
+              </div>
             </div>
           ) : data ? (
             <>
@@ -1346,14 +1488,14 @@ function BenchmarkModal({ isOpen, onClose, data, isLoading, onRunBenchmark }) {
             </>
           ) : null}
 
-          <div className="modal-actions" style={{ justifyContent: 'space-between', marginTop: '14px' }}>
+          <div className="modal-actions space-between">
             <button
               type="button"
               className="open-neo4j-web-btn"
               onClick={() => onRunBenchmark(true)}
               disabled={isLoading}
             >
-              <RefreshCw size={14} />
+              <RefreshCw size={14} aria-hidden="true" />
               <span>Chạy kiểm thử LLM thực tế (có thể tính phí)</span>
             </button>
             <button type="button" onClick={onClose} className="close-modal-secondary">
@@ -1854,16 +1996,29 @@ function App() {
 
   return (
     <div className={`chatgpt-app ${theme === 'dark' ? 'dark-theme' : 'light-theme'}`}>
+      {/* Lớp phủ mờ đóng sidebar khi bấm ra ngoài trên thiết bị di động */}
+      {sidebarOpen && (
+        <div
+          className="sidebar-mobile-backdrop"
+          onClick={() => setSidebarOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
       {/* ====================================================================
           1. THANH SIDEBAR BÊN TRÁI (PHONG CÁCH CHATGPT DARK SIDEBAR)
          ==================================================================== */}
-      <aside className={`chatgpt-sidebar ${sidebarOpen ? 'open' : 'collapsed'}`}>
+      <aside
+        className={`chatgpt-sidebar ${sidebarOpen ? 'open' : 'collapsed'}`}
+        aria-label="Lịch sử tư vấn và kịch bản mẫu"
+      >
         <div className="sidebar-top-bar">
           <button
             type="button"
             className="sidebar-icon-btn"
             onClick={() => setSidebarOpen(false)}
             title="Thu gọn thanh bên"
+            aria-label="Thu gọn thanh bên"
           >
             <PanelLeftClose size={18} />
           </button>
@@ -1908,35 +2063,49 @@ function App() {
         <div className="sidebar-scroll-area">
           <div className="sidebar-group-label">Lịch sử tư vấn</div>
           <div className="conv-list">
-            {conversations.map((conv) => (
-              <div
-                key={conv.id}
-                className={`conv-item ${conv.id === activeConvId ? 'active' : ''}`}
-                onClick={() => {
-                  if (conv.id !== activeConvId) {
-                    abortControllerRef.current?.abort();
-                    setIsLoading(false);
-                  }
-                  setActiveConvId(conv.id);
-                  const lastSym = conv.messages
-                    ?.slice()
-                    .reverse()
-                    .find((m) => m.symbolicData)?.symbolicData;
-                  setCurrentSymbolicData(lastSym || null);
-                }}
-              >
-                <MessageSquare size={14} className="conv-icon" />
-                <span className="conv-title">{conv.title}</span>
-                <button
-                  type="button"
-                  className="conv-delete-btn"
-                  onClick={(e) => deleteConversation(e, conv.id)}
-                  title="Xóa cuộc trò chuyện"
+            {conversations.map((conv) => {
+              const selectConversation = () => {
+                if (conv.id !== activeConvId) {
+                  abortControllerRef.current?.abort();
+                  setIsLoading(false);
+                }
+                setActiveConvId(conv.id);
+                const lastSym = conv.messages
+                  ?.slice()
+                  .reverse()
+                  .find((m) => m.symbolicData)?.symbolicData;
+                setCurrentSymbolicData(lastSym || null);
+              };
+
+              return (
+                <div
+                  key={conv.id}
+                  role="button"
+                  tabIndex={0}
+                  aria-current={conv.id === activeConvId ? 'true' : undefined}
+                  className={`conv-item ${conv.id === activeConvId ? 'active' : ''}`}
+                  onClick={selectConversation}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      selectConversation();
+                    }
+                  }}
                 >
-                  <Trash2 size={13} />
-                </button>
-              </div>
-            ))}
+                  <MessageSquare size={14} className="conv-icon" />
+                  <span className="conv-title">{conv.title}</span>
+                  <button
+                    type="button"
+                    className="conv-delete-btn"
+                    onClick={(e) => deleteConversation(e, conv.id)}
+                    title="Xóa cuộc trò chuyện"
+                    aria-label={`Xóa cuộc trò chuyện: ${conv.title}`}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              );
+            })}
           </div>
 
           {/* Kịch bản kiểm thử nhanh cho Hội đồng */}
@@ -1986,6 +2155,7 @@ function App() {
                 fetchLiveNeo4jGraph(selectedDocCode);
               }}
               title="Đồng bộ lại trạng thái"
+              aria-label="Đồng bộ lại trạng thái kết nối"
             >
               <RefreshCw size={12} />
             </button>
@@ -2001,14 +2171,26 @@ function App() {
         <header className="chatgpt-topbar">
           <div className="topbar-left">
             {!sidebarOpen && (
-              <button
-                type="button"
-                className="topbar-icon-btn"
-                onClick={() => setSidebarOpen(true)}
-                title="Mở thanh bên"
-              >
-                <PanelLeftOpen size={18} />
-              </button>
+              <>
+                <button
+                  type="button"
+                  className="topbar-icon-btn"
+                  onClick={() => setSidebarOpen(true)}
+                  title="Mở thanh bên"
+                  aria-label="Mở thanh bên"
+                >
+                  <PanelLeftOpen size={18} />
+                </button>
+                <button
+                  type="button"
+                  className="topbar-icon-btn"
+                  onClick={createNewChat}
+                  title="Bắt đầu cuộc trò chuyện mới"
+                  aria-label="Bắt đầu cuộc trò chuyện mới"
+                >
+                  <Plus size={18} />
+                </button>
+              </>
             )}
             <div className="model-selector-pill">
               <Scale size={16} className="model-icon" />
@@ -2024,6 +2206,7 @@ function App() {
               className="topbar-pill-btn theme-toggle-btn"
               onClick={toggleTheme}
               title={theme === 'dark' ? 'Chuyển sang Giao diện Nền sáng' : 'Chuyển sang Giao diện Nền tối'}
+              aria-label={theme === 'dark' ? 'Chuyển sang Giao diện Nền sáng' : 'Chuyển sang Giao diện Nền tối'}
             >
               {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
               <span>{theme === 'dark' ? 'Nền sáng' : 'Nền tối'}</span>
@@ -2045,6 +2228,7 @@ function App() {
               type="button"
               className={`topbar-pill-btn ${isComparisonMode ? 'active-ab' : ''}`}
               onClick={() => setIsComparisonMode(!isComparisonMode)}
+              aria-pressed={isComparisonMode}
               title="So sánh song song Naive Vector RAG vs. Neuro-Symbolic Hybrid RAG"
             >
               {isComparisonMode ? <ToggleRight size={17} /> : <ToggleLeft size={17} />}
@@ -2056,6 +2240,7 @@ function App() {
               type="button"
               className={`topbar-pill-btn ${showSymbolicPanel ? 'active-graph' : ''}`}
               onClick={() => setShowSymbolicPanel(!showSymbolicPanel)}
+              aria-pressed={showSymbolicPanel}
             >
               <Network size={15} />
               <span>Đồ thị Neo4j 3D & XAI</span>
@@ -2122,7 +2307,12 @@ function App() {
                       </div>
 
                       {msg.streaming && !msg.text ? (
-                        <div className="chatgpt-loading-box">
+                        <div
+                          className="chatgpt-loading-box"
+                          role="status"
+                          aria-live="polite"
+                          aria-busy="true"
+                        >
                           <div className="loading-title">
                             Đang truy xuất căn cứ pháp luật & suy luận Symbolic...
                           </div>
@@ -2132,6 +2322,11 @@ function App() {
                             <span>2. Neo4j 3D Graph</span>
                             <span>→</span>
                             <span>3. Rule Engine</span>
+                          </div>
+                          <div className="skeleton-lines" aria-hidden="true">
+                            <div className="skeleton-bar w-90" />
+                            <div className="skeleton-bar w-75" />
+                            <div className="skeleton-bar w-55" />
                           </div>
                         </div>
                       ) : isComparisonMode && msg.naiveText ? (
@@ -2245,7 +2440,8 @@ function App() {
             ref={evidenceInputRef}
             type="file"
             accept=".png,.jpg,.jpeg,.webp,.bmp,.pdf,.docx,.txt,.md"
-            style={{ display: 'none' }}
+            className="sr-only"
+            aria-label="Chọn tệp bằng chứng để tải lên"
             onChange={handleEvidenceUpload}
           />
           <form
@@ -2257,34 +2453,20 @@ function App() {
           >
             {evidenceAttachment && (
               <div
-                className="evidence-attachment-banner"
-                style={
-                  evidenceAttachment.is_valid_evidence === false
-                    ? {
-                        borderColor: 'rgba(220, 38, 38, 0.45)',
-                        background: 'rgba(254, 242, 242, 0.85)',
-                      }
-                    : undefined
-                }
+                className={`evidence-attachment-banner ${
+                  evidenceAttachment.is_valid_evidence === false ? 'invalid' : ''
+                }`}
+                role="status"
+                aria-live="polite"
               >
                 <div className="evidence-banner-left">
-                  <Paperclip
-                    size={14}
-                    className="evidence-icon"
-                    style={evidenceAttachment.is_valid_evidence === false ? { color: '#dc2626' } : undefined}
-                  />
+                  <Paperclip size={14} className="evidence-icon" />
                   <div className="evidence-info">
-                    <span
-                      className="evidence-name"
-                      style={evidenceAttachment.is_valid_evidence === false ? { color: '#b91c1c' } : undefined}
-                    >
+                    <span className="evidence-name">
                       {evidenceAttachment.is_valid_evidence === false ? '⚠️ Ảnh/Tệp không hợp lệ: ' : 'Bằng chứng: '}
                       <b>{evidenceAttachment.filename}</b> ({evidenceAttachment.char_count} ký tự OCR)
                     </span>
-                    <span
-                      className="evidence-preview"
-                      style={evidenceAttachment.is_valid_evidence === false ? { color: '#dc2626' } : undefined}
-                    >
+                    <span className="evidence-preview">
                       {evidenceAttachment.is_valid_evidence === false
                         ? evidenceAttachment.rejection_reason || 'Không tìm thấy văn bản pháp lý hoặc hành vi vi phạm trong ảnh.'
                         : `${evidenceAttachment.extracted_text.slice(0, 140)}...`}
@@ -2296,6 +2478,7 @@ function App() {
                   className="evidence-remove-btn"
                   onClick={() => setEvidenceAttachment(null)}
                   title="Gỡ bằng chứng đính kèm"
+                  aria-label="Gỡ bằng chứng đính kèm"
                 >
                   <X size={14} />
                 </button>
@@ -2323,6 +2506,7 @@ function App() {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Hỏi bất kỳ quy định, mức xử phạt, hoặc đính kèm ảnh chụp bằng chứng / PDF..."
+              aria-label="Nhập câu hỏi tư vấn pháp luật CNTT"
               disabled={isLoading}
               className="chatgpt-textarea"
             />
@@ -2359,6 +2543,7 @@ function App() {
                   type="button"
                   className={`composer-chip ${isComparisonMode ? 'active' : ''}`}
                   onClick={() => setIsComparisonMode(!isComparisonMode)}
+                  aria-pressed={isComparisonMode}
                 >
                   <Layers size={13} />
                   <span>Đối chứng A/B: {isComparisonMode ? 'Bật' : 'Tắt'}</span>
@@ -2370,6 +2555,7 @@ function App() {
                 disabled={isLoading || (!input.trim() && !evidenceAttachment) || (evidenceAttachment?.is_valid_evidence === false && !input.trim())}
                 className="chatgpt-send-btn"
                 title={evidenceAttachment?.is_valid_evidence === false && !input.trim() ? "Tệp đính kèm không hợp lệ. Vui lòng gỡ tệp hoặc nhập câu hỏi cụ thể." : "Gửi câu hỏi (Enter)"}
+                aria-label="Gửi câu hỏi"
               >
                 {isLoading ? <Loader2 size={16} className="spin-icon" /> : <Send size={15} />}
               </button>
@@ -2382,7 +2568,10 @@ function App() {
           3. KHUNG ĐỒ THỊ NEO4J 3D & LUỒNG SUY LUẬN SYMBOLIC (BÊN PHẢI / FULLSCREEN)
          ==================================================================== */}
       {showSymbolicPanel && (
-        <aside className={`symbolic-panel ${isGraphFullscreen ? 'fullscreen-panel' : ''}`}>
+        <aside
+          className={`symbolic-panel ${isGraphFullscreen ? 'fullscreen-panel' : ''}`}
+          aria-label="Không gian Đồ thị Neo4j 3D và Suy luận Symbolic"
+        >
           <div className="panel-header">
             <div className="panel-title-group">
               <Cpu size={18} className="panel-header-icon" />
@@ -2393,12 +2582,13 @@ function App() {
                 </span>
               </div>
             </div>
-            <div style={{ display: 'flex', gap: '4px' }}>
+            <div className="panel-header-actions">
               <button
                 type="button"
                 className="panel-close-btn"
                 onClick={() => setIsGraphFullscreen(!isGraphFullscreen)}
                 title={isGraphFullscreen ? 'Thu nhỏ' : 'Mở rộng toàn màn hình'}
+                aria-label={isGraphFullscreen ? 'Thu nhỏ bảng đồ thị' : 'Mở rộng bảng đồ thị toàn màn hình'}
               >
                 {isGraphFullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
               </button>
@@ -2410,6 +2600,7 @@ function App() {
                   setShowSymbolicPanel(false);
                 }}
                 title="Đóng bảng"
+                aria-label="Đóng bảng phân tích Symbolic"
               >
                 <X size={16} />
               </button>
@@ -2417,9 +2608,13 @@ function App() {
           </div>
 
           {/* 3 Tab điều hướng: Đồ thị 3D đặt lên đầu tiên */}
-          <div className="panel-tabs">
+          <div className="panel-tabs" role="tablist" aria-label="Các chế độ xem phân tích Symbolic">
             <button
               type="button"
+              id="tab-graph"
+              role="tab"
+              aria-selected={activeTab === 'graph'}
+              aria-controls="tabpanel-symbolic"
               className={`panel-tab ${activeTab === 'graph' ? 'active' : ''}`}
               onClick={() => setActiveTab('graph')}
             >
@@ -2428,6 +2623,10 @@ function App() {
             </button>
             <button
               type="button"
+              id="tab-rules"
+              role="tab"
+              aria-selected={activeTab === 'rules'}
+              aria-controls="tabpanel-symbolic"
               className={`panel-tab ${activeTab === 'rules' ? 'active' : ''}`}
               onClick={() => setActiveTab('rules')}
             >
@@ -2436,6 +2635,10 @@ function App() {
             </button>
             <button
               type="button"
+              id="tab-sources"
+              role="tab"
+              aria-selected={activeTab === 'sources'}
+              aria-controls="tabpanel-symbolic"
               className={`panel-tab ${activeTab === 'sources' ? 'active' : ''}`}
               onClick={() => setActiveTab('sources')}
             >
@@ -2444,7 +2647,12 @@ function App() {
             </button>
           </div>
 
-          <div className="panel-content">
+          <div
+            id="tabpanel-symbolic"
+            role="tabpanel"
+            aria-labelledby={`tab-${activeTab}`}
+            className="panel-content"
+          >
             {/* TAB 1: ĐỒ THỊ TRI THỨC NEO4J 3D (LUÔN HIỂN THỊ DỮ LIỆU THẬT TỪ NEO4J) */}
             {activeTab === 'graph' && (
               <KnowledgeGraph3D
@@ -2476,7 +2684,7 @@ function App() {
                   </small>
                 </div>
               ) : (
-                <div className="rules-view" style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div className="rules-view">
                   <div className="card-box">
                     <div className="card-box-title">
                       <CheckCircle2 size={14} className="icon-success" />
@@ -2518,7 +2726,7 @@ function App() {
                       {activeSymbolic.reasoning?.facts?.invalid_docs?.length > 0 && (
                         <div className="fact-item">
                           <span className="fact-label">Cảnh báo Guardrail:</span>
-                          <span className="fact-value" style={{ color: '#dc2626' }}>
+                          <span className="fact-value text-danger">
                             {activeSymbolic.reasoning.facts.invalid_docs.join(', ')} (Không có trong kho dữ liệu)
                           </span>
                         </div>
@@ -2667,7 +2875,7 @@ function App() {
 
             {/* TAB 3: TRÍCH DẪN NGUỒN VECTOR DATABASE */}
             {activeTab === 'sources' && (
-              <div className="sources-view" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div className="sources-view">
                 <div className="card-box-title">
                   <BookOpen size={14} className="icon-primary" />
                   <span>Nguồn luật và án lệ đã truy xuất</span>

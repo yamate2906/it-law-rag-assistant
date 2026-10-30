@@ -100,8 +100,16 @@ def get_embeddings():
 
 
 def create_neo4j_driver():
+    import logging
     from neo4j import GraphDatabase
 
+    logging.getLogger("neo4j.notifications").setLevel(logging.ERROR)
     if not NEO4J_PASSWORD:
         raise RuntimeError("Thiếu NEO4J_PASSWORD trong backend/.env.")
-    return GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+    return GraphDatabase.driver(
+        NEO4J_URI,
+        auth=(NEO4J_USER, NEO4J_PASSWORD),
+        connection_timeout=3.0,
+        connection_acquisition_timeout=4.0,
+        max_connection_pool_size=20,
+    )
